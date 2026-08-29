@@ -241,7 +241,7 @@ class Outcome:
     detail: str = ""
 
 
-def analyze(ticker: str, repo: Repo, force: bool = False) -> Outcome:
+def analyze(ticker: str, repo: Repo, force: bool = False, con_ia: bool = True) -> Outcome:
     ticker = ticker.upper()
     try:
         f = build_fundamentals(ticker)
@@ -261,6 +261,13 @@ def analyze(ticker: str, repo: Repo, force: bool = False) -> Outcome:
         if not force:
             if hit := repo.cached_analysis(company_id, h):
                 return Outcome(ticker, "cache", r.score, hit["verdict"], hit["report_md"])
+
+        if not con_ia:
+            # Pasó el cribado pero, por ahora, no gastamos una llamada a la IA
+            # (barrido masivo del universo: primero se criba TODO gratis, la
+            # IA se reserva para un lote reducido cada vez).
+            return Outcome(ticker, "pendiente_ia", r.score,
+                           detail="pasa el cribado, aún sin analizar con IA")
 
         payload = build_llm_payload(f, r)
         resp = call_claude(payload)
