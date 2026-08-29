@@ -1,0 +1,13 @@
+{
+  "name": "Vigía — cartera en observación",
+  "short_name": "Vigía",
+  "description": "Vigilancia de inversión a largo plazo",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12161C",
+  "theme_color": "#12161C",
+  "icons": [
+    { "src": "icon.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

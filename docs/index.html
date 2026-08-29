@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>VIGÍA — cartera en observación</title>
+<meta name="description" content="Vigilancia de inversión a largo plazo" />
+
+<!-- Comportamiento de app al añadir a la pantalla de inicio -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Vigía" />
+<meta name="theme-color" content="#12161C" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icon.svg" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/lib/marked.umd.min.js"></script>
+
+<style>
+  :root {
+    --ink:        #12161C;
+    --ink-2:      #1B212B;
+    --ink-3:      #232B38;
+    --hairline:   #2C3644;
+    --paper:      #EDE6D3;
+    --paper-dim:  #A9A395;
+    --slate:      #7C8695;
+    --brass:      #C9A227;
+    --brass-dim:  #8A7024;
+    --sage:       #7A9B7E;
+    --brick:      #9C4A3C;
+    --radius:     14px;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    padding-bottom: calc(32px + env(safe-area-inset-bottom));
+  }
+
+  .num {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- cabecera ---------- */
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: linear-gradient(var(--ink) 82%, transparent);
+    padding: calc(20px + env(safe-area-inset-top)) 20px 12px;
+  }
+
+  .marca {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+
+  .marca h1 {
+    font-family: 'IBM Plex Serif', serif;
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: 0.02em;
+    margin: 0;
+  }
+
+  .marca h1 span { color: var(--brass); }
+
+  .estado {
+    font-size: 11px;
+    color: var(--slate);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-bottom: 10px;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+
+  .tab {
+    flex: none;
+    padding: 7px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--hairline);
+    background: var(--ink-2);
+    color: var(--paper-dim);
+    font-size: 13px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .tab[aria-pressed="true"] {
+    background: var(--brass);
+    border-color: var(--brass);
+    color: var(--ink);
+  }
+
+  .buscar {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--hairline);
+    background: var(--ink-2);
+    color: var(--paper);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+  }
+  .buscar::placeholder { color: var(--slate); }
+  .buscar:focus { outline: 2px solid var(--brass); outline-offset: -1px; }
+
+  /* ---------- lista ---------- */
+
+  main { padding: 4px 16px 0; max-width: 640px; margin: 0 auto; }
+
+  .vacio {
+    text-align: center;
+    color: var(--slate);
+    padding: 60px 20px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .entrada {
+    background: var(--ink-2);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .entrada.en-zona {
+    border-color: var(--brass-dim);
+    box-shadow: 0 0 0 1px rgba(201,162,39,0.25), 0 0 22px -6px rgba(201,162,39,0.55);
+  }
+  .entrada.en-zona::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--brass);
+    animation: respirar 2.8s ease-in-out infinite;
+  }
+  @keyframes respirar {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .entrada.en-zona::before { animation: none; opacity: 1; }
+  }
+
+  .cabecera-entrada {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px 12px;
+    cursor: pointer;
+  }
+
+  .id-empresa { min-width: 0; }
+
+  .ticker {
+    font-family: 'IBM Plex Serif', serif;
+    font-weight: 600;
+    font-size: 19px;
+    letter-spacing: 0.01em;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .nombre {
+    color: var(--slate);
+    font-size: 12.5px;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pill {
+    flex: none;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 4px 9px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .v-COMPRA_FUERTE, .v-COMPRA { background: rgba(122,155,126,0.18); color: var(--sage); }
+  .v-VIGILAR                  { background: rgba(201,162,39,0.16); color: var(--brass); }
+  .v-NO_INVERTIBLE, .v-DESCARTE { background: rgba(156,74,60,0.16); color: #C17364; }
+
+  .precios {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 0 16px 14px;
+  }
+  .precio-caja {
+    background: var(--ink-3);
+    border-radius: 9px;
+    padding: 8px 10px;
+  }
+  .precio-caja .etiqueta {
+    font-size: 10px;
+    color: var(--slate);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 3px;
+  }
+  .precio-caja .valor {
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .precio-caja.destacado .valor { color: var(--brass); }
+
+  .tesis-corta {
+    padding: 0 16px 14px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--paper-dim);
+  }
+
+  .ver-mas {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--hairline);
+    font-size: 12.5px;
+    color: var(--slate);
+    cursor: pointer;
+    user-select: none;
+  }
+  .ver-mas .flecha { transition: transform 0.2s; }
+  .entrada.abierta .ver-mas .flecha { transform: rotate(90deg); }
+
+  .informe {
+    display: none;
+    padding: 4px 16px 18px;
+    border-top: 1px solid var(--hairline);
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--paper-dim);
+  }
+  .entrada.abierta .informe { display: block; }
+  .informe h1, .informe h2 { font-family: 'IBM Plex Serif', serif; color: var(--paper); font-size: 15px; margin: 16px 0 6px; }
+  .informe h1:first-child, .informe h2:first-child { margin-top: 10px; }
+  .informe strong { color: var(--paper); }
+  .informe table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
+  .informe th, .informe td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); }
+  .informe ul { padding-left: 18px; }
+  .informe code { font-family: 'IBM Plex Mono', monospace; }
+
+  .meta-informe {
+    padding: 0 16px 14px;
+    font-size: 10.5px;
+    color: var(--slate);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .carga, .error {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--slate);
+    font-size: 14px;
+  }
+  .error { color: var(--brick); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="marca">
+    <h1>VIG<span>Í</span>A</h1>
+    <div class="estado" id="estado">cargando…</div>
+  </div>
+  <div class="tabs" role="tablist" aria-label="Filtrar por veredicto">
+    <button class="tab" data-filtro="todas" aria-pressed="true">Todas</button>
+    <button class="tab" data-filtro="comprar">Comprar</button>
+    <button class="tab" data-filtro="vigilar">Vigilar</button>
+    <button class="tab" data-filtro="descartadas">Descartadas</button>
+  </div>
+  <input class="buscar" id="buscar" type="search" placeholder="Buscar por ticker o nombre…" autocomplete="off" />
+</header>
+
+<main id="lista">
+  <div class="carga">Consultando la cartera…</div>
+</main>
+
+<script>
+// ──────────────────────────────────────────────────────────────
+// CONFIGURA ESTAS DOS LÍNEAS con tus propios datos de Supabase.
+// Usa la clave "anon" / "public" — NUNCA la service_role / secret.
+// Project Settings → API → (Legacy API Keys si existe) → anon / public
+const SUPABASE_URL = "https://mimciqhezcojgvoxgcob.supabase.co/rest/v1/";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pbWNpcWhlemNvamd2b3hnY29iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5NTI4NDYsImV4cCI6MjEwMzUyODg0Nn0.OMPmNx6H3h8DB4ZGiRPJWMpMkNGYHS1q6mTtdv6RdGE";
+// ──────────────────────────────────────────────────────────────
+
+const ORDEN_VEREDICTO = {
+  COMPRA_FUERTE: 0, COMPRA: 1, VIGILAR: 2, NO_INVERTIBLE: 3, DESCARTE: 4,
+};
+
+const GRUPOS = {
+  comprar: ["COMPRA_FUERTE", "COMPRA"],
+  vigilar: ["VIGILAR"],
+  descartadas: ["NO_INVERTIBLE", "DESCARTE"],
+};
+
+let datos = [];
+let filtroActivo = "todas";
+let busqueda = "";
+
+const $lista = document.getElementById("lista");
+const $estado = document.getElementById("estado");
+const $buscar = document.getElementById("buscar");
+
+function fmtMoneda(v) {
+  if (v === null || v === undefined) return "—";
+  return Number(v).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtFecha(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function primeraFrase(md) {
+  if (!md) return "";
+  const sinCabeceras = md.replace(/^#.*$/gm, "").trim();
+  const parrafo = sinCabeceras.split(/\n\s*\n/).find(p => p.trim() && !p.trim().startsWith("**Veredicto"));
+  return (parrafo || "").replace(/\*\*/g, "").replace(/\n/g, " ").trim().slice(0, 160);
+}
+
+function tarjeta(fila) {
+  const precioActual = fila.ultimo_precio ?? fila.price_at_analysis;
+  const etiquetaPrecio = fila.ultimo_precio ? "Precio actual" : "Precio al analizar";
+  const enZona = !!fila.en_zona_compra;
+
+  const el = document.createElement("article");
+  el.className = "entrada" + (enZona ? " en-zona" : "");
+  el.innerHTML = `
+    <div class="cabecera-entrada">
+      <div class="id-empresa">
+        <div class="ticker">${fila.ticker}<span class="pill v-${fila.veredicto_final}">${fila.veredicto_final.replace('_',' ')}</span></div>
+        <div class="nombre">${fila.name || ''}</div>
+      </div>
+    </div>
+    <div class="precios">
+      <div class="precio-caja">
+        <div class="etiqueta">${etiquetaPrecio}</div>
+        <div class="valor num">${fmtMoneda(precioActual)}</div>
+      </div>
+      <div class="precio-caja ${enZona ? 'destacado' : ''}">
+        <div class="etiqueta">Precio de entrada</div>
+        <div class="valor num">${fmtMoneda(fila.precio_entrada)}</div>
+      </div>
+    </div>
+    ${fila.report_md ? `<div class="tesis-corta">${primeraFrase(fila.report_md)}</div>` : ''}
+    <div class="ver-mas"><span class="flecha">▸</span> informe completo</div>
+    <div class="informe"></div>
+    <div class="meta-informe" style="display:none">
+      nota ${fila.nota_fundamental ?? '—'}/10 · confianza ${fila.confianza || '—'} · datos a ${fmtFecha(fila.datos_a)} · analizado ${fmtFecha(fila.analizado_el)}
+    </div>
+  `;
+
+  const $verMas = el.querySelector(".ver-mas");
+  const $informe = el.querySelector(".informe");
+  const $meta = el.querySelector(".meta-informe");
+  let render = false;
+
+  $verMas.addEventListener("click", () => {
+    el.classList.toggle("abierta");
+    $meta.style.display = el.classList.contains("abierta") ? "block" : "none";
+    if (!render && el.classList.contains("abierta")) {
+      $informe.innerHTML = fila.report_md
+        ? marked.parse(fila.report_md)
+        : "<p>Sin informe todavía.</p>";
+      render = true;
+    }
+  });
+
+  return el;
+}
+
+function pintar() {
+  const grupo = GRUPOS[filtroActivo];
+  const q = busqueda.trim().toLowerCase();
+
+  const visibles = datos.filter(f => {
+    if (grupo && !grupo.includes(f.veredicto_final)) return false;
+    if (q && !`${f.ticker} ${f.name || ''}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  $lista.innerHTML = "";
+  if (visibles.length === 0) {
+    $lista.innerHTML = `<div class="vacio">Nada por aquí.<br>Ajusta el filtro o la búsqueda.</div>`;
+    return;
+  }
+  visibles.forEach(f => $lista.appendChild(tarjeta(f)));
+}
+
+document.querySelectorAll(".tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-pressed", "false"));
+    btn.setAttribute("aria-pressed", "true");
+    filtroActivo = btn.dataset.filtro;
+    pintar();
+  });
+});
+
+$buscar.addEventListener("input", (e) => {
+  busqueda = e.target.value;
+  pintar();
+});
+
+async function cargar() {
+  try {
+    const client = supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+    const { data, error } = await client
+      .from("v_tesis_completa")
+      .select("*");
+
+    if (error) throw error;
+
+    datos = (data || []).sort((a, b) => {
+      const oa = ORDEN_VEREDICTO[a.veredicto_final] ?? 9;
+      const ob = ORDEN_VEREDICTO[b.veredicto_final] ?? 9;
+      if (oa !== ob) return oa - ob;
+      return (b.nota_fundamental ?? 0) - (a.nota_fundamental ?? 0);
+    });
+
+    $estado.textContent = `${datos.length} empresa${datos.length === 1 ? '' : 's'}`;
+    pintar();
+  } catch (err) {
+    console.error(err);
+    $lista.innerHTML = `<div class="error">No se pudo cargar la cartera.<br>${(err && err.message) || err}</div>`;
+    $estado.textContent = "error";
+  }
+}
+
+cargar();
+</script>
+
+</body>
+</html>

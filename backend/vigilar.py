@@ -1,7 +1,9 @@
 """
 La parte de "la app vigila sola". No vuelve a analizar nada con IA — solo
-refresca el PRECIO (barato, vía Finnhub) de las empresas marcadas VIGILAR
-y comprueba si ya han caído a su precio de entrada.
+refresca el PRECIO (barato, vía Finnhub) de las empresas marcadas VIGILAR,
+comprueba si ya han caído a su precio de entrada, y guarda ese precio de
+vuelta en Supabase — así el dashboard móvil puede mostrarlo sin tener que
+llamar a Finnhub por su cuenta ni exponer esa clave en el navegador.
 
     python vigilar.py                 # comprueba todas las VIGILAR vigentes
     python vigilar.py --salida alertas.json
@@ -32,12 +34,23 @@ def vigilar_vencidas(repo: Repo) -> list[dict]:
     ya definida en el esquema — un solo viaje a la base de datos."""
     res = (
         repo.db.table("v_tesis_completa")
-        .select("ticker, name, veredicto_final, precio_entrada, price_at_analysis, analizado_el")
+        .select("analysis_id, ticker, name, veredicto_final, precio_entrada, price_at_analysis, analizado_el")
         .eq("veredicto_final", "VIGILAR")
         .not_.is_("precio_entrada", "null")
         .execute()
     )
     return res.data or []
+
+
+def guardar_precio(repo: Repo, analysis_id: str, precio: float, cruzada: bool) -> None:
+    """Escribe el precio recién comprobado en la fila de ai_analyses, para
+    todas las vigiladas (no solo las que han cruzado) — así el dashboard
+    siempre puede mostrar un precio actual razonablemente fresco."""
+    repo.db.table("ai_analyses").update({
+        "ultimo_precio": precio,
+        "ultimo_precio_en": datetime.now(timezone.utc).isoformat(),
+        "en_zona_compra": cruzada,
+    }).eq("id", analysis_id).execute()
 
 
 def main() -> None:
@@ -71,6 +84,8 @@ def main() -> None:
         cruzada = precio_actual <= entrada
         marca = "✅ EN ZONA DE COMPRA" if cruzada else "  todavía por encima"
         print(f"  {ticker:8} precio actual {precio_actual:>9.2f} · entrada {entrada:>9.2f}  {marca}")
+
+        guardar_precio(repo, c["analysis_id"], precio_actual, cruzada)
 
         if cruzada:
             alertas.append({
