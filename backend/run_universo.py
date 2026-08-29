@@ -28,10 +28,15 @@ from datetime import datetime, timezone
 
 from pipeline import Repo, analyze
 from universe import universo_completo
+from llm_gemini import GEMINI_KEYS
 
 log = logging.getLogger(__name__)
 
-PAUSA_ENTRE_IA_SEG = 5   # nivel gratuito de Gemini: mejor ir despacio que chocar con 429
+# Con una sola clave, mejor ir despacio. Con varias, las llamadas se
+# reparten entre proyectos distintos (ver llm_gemini.py), así que cada
+# clave individual recibe muchas menos peticiones por minuto — se puede
+# acortar la pausa sin acercarse más a ningún límite por clave.
+PAUSA_ENTRE_IA_SEG = 5 if len(GEMINI_KEYS) <= 1 else 3
 
 
 def sembrar(repo: Repo) -> int:

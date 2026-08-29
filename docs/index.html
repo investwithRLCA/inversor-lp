@@ -267,18 +267,36 @@
     font-size: 13.5px;
     line-height: 1.6;
     color: var(--paper-dim);
-    overflow-wrap: break-word;
+  }
+  /* Blindaje general: sea cual sea el elemento que traiga el Markdown
+     (párrafo, celda de tabla, encabezado, código suelto...), nunca se
+     sale del ancho de la tarjeta. Es la red de seguridad definitiva,
+     no depende de adivinar qué elemento concreto está fallando. */
+  .informe * {
+    max-width: 100%;
+    overflow-wrap: anywhere;
     word-break: break-word;
+    min-width: 0;
   }
   .entrada.abierta .informe { display: block; }
   .informe h1, .informe h2 { font-family: 'IBM Plex Serif', serif; color: var(--paper); font-size: 15px; margin: 16px 0 6px; }
   .informe h1:first-child, .informe h2:first-child { margin-top: 10px; }
   .informe strong { color: var(--paper); }
-  .informe p, .informe li { overflow-wrap: break-word; word-break: break-word; }
   .informe table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
-  .informe th, .informe td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); overflow-wrap: break-word; word-break: break-word; }
+  .informe th, .informe td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); }
   .informe ul { padding-left: 18px; margin: 6px 0; }
-  .informe code { font-family: 'IBM Plex Mono', monospace; overflow-wrap: anywhere; }
+  .informe code { font-family: 'IBM Plex Mono', monospace; }
+  /* Por si queda algún bloque de código de verdad (o un resto de valla que
+     la limpieza no detectó): que se desplace con scroll propio en vez de
+     reventar el ancho de toda la tarjeta. */
+  .informe pre {
+    white-space: pre-wrap;
+    overflow-x: auto;
+    background: var(--ink-3);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 8px 0;
+  }
 
   .meta-informe {
     padding: 0 16px 14px;
@@ -353,6 +371,21 @@ function fmtFecha(iso) {
   return new Date(iso).toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function quitarVallaMarkdown(md) {
+  // Igual que backend/llm_gemini.py::_quitar_valla_markdown, para los
+  // informes que ya están guardados en Supabase con la valla incluida
+  // (analizados antes de este arreglo) — sin esto, marked.js interpreta
+  // todo el informe como un único bloque de código y no ajusta línea.
+  if (!md) return md;
+  const t = md.trim();
+  if (!t.startsWith("```")) return t;
+  const finPrimeraLinea = t.indexOf("\n");
+  if (finPrimeraLinea === -1) return t;
+  let resto = t.slice(finPrimeraLinea + 1).trimEnd();
+  if (resto.endsWith("```")) return resto.slice(0, -3).trim();
+  return t;
+}
+
 function primeraFrase(md) {
   if (!md) return "";
   const sinCabeceras = md.replace(/^#.*$/gm, "").trim();
@@ -364,6 +397,7 @@ function tarjeta(fila) {
   const precioActual = fila.ultimo_precio ?? fila.price_at_analysis;
   const etiquetaPrecio = fila.ultimo_precio ? "Precio actual" : "Precio al analizar";
   const enZona = !!fila.en_zona_compra;
+  const informeMd = quitarVallaMarkdown(fila.report_md);
 
   const el = document.createElement("article");
   el.className = "entrada" + (enZona ? " en-zona" : "");
@@ -384,7 +418,7 @@ function tarjeta(fila) {
         <div class="valor num">${fmtMoneda(fila.precio_entrada)}</div>
       </div>
     </div>
-    ${fila.report_md ? `<div class="tesis-corta">${primeraFrase(fila.report_md)}</div>` : ''}
+    ${informeMd ? `<div class="tesis-corta">${primeraFrase(informeMd)}</div>` : ''}
     <div class="ver-mas"><span class="flecha">▸</span> informe completo</div>
     <div class="informe"></div>
     <div class="meta-informe" style="display:none">
@@ -401,8 +435,8 @@ function tarjeta(fila) {
     el.classList.toggle("abierta");
     $meta.style.display = el.classList.contains("abierta") ? "block" : "none";
     if (!render && el.classList.contains("abierta")) {
-      $informe.innerHTML = fila.report_md
-        ? marked.parse(fila.report_md)
+      $informe.innerHTML = informeMd
+        ? marked.parse(informeMd)
         : "<p>Sin informe todavía.</p>";
       render = true;
     }

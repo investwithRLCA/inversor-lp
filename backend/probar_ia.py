@@ -11,6 +11,9 @@ Variables de entorno necesarias:
     SEC_USER_AGENT     obligatoria siempre  -> "TuNombre/1.0 (tu@email.com)"
     FINNHUB_API_KEY    opcional  (sin ella no hay precio, ni PER, ni valoración)
     GEMINI_API_KEY     solo con --ia. Gratis en https://aistudio.google.com/apikey
+    GEMINI_API_KEYS    alternativa con varias claves separadas por comas
+                       (una de CADA proyecto de Google Cloud, si no no sirve
+                       de nada) — se reparten las llamadas entre ellas.
 """
 
 from __future__ import annotations
@@ -31,9 +34,9 @@ def aviso_entorno(usa_ia: bool) -> None:
         print('       export SEC_USER_AGENT="TuNombre/1.0 (tu@email.com)"\n')
     if not os.getenv("FINNHUB_API_KEY"):
         print("AVISO: sin FINNHUB_API_KEY no hay precio → sin PER ni valoración.\n")
-    if usa_ia and not os.getenv("GEMINI_API_KEY"):
+    if usa_ia and not (os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEYS")):
         sys.exit(
-            "ERROR: --ia necesita GEMINI_API_KEY.\n"
+            "ERROR: --ia necesita GEMINI_API_KEY (o GEMINI_API_KEYS).\n"
             "       Consíguela gratis, sin tarjeta, en https://aistudio.google.com/apikey"
         )
 
