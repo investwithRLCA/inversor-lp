@@ -242,6 +242,37 @@ class SecEdgarProvider:
                 return {fy: out[fy][1] for fy in keep}
         return {}
 
+    @staticmethod
+    def _fecha_presentacion(facts: dict, tags: list[str], fy_objetivo: int) -> str | None:
+        """Fecha ('filed') del 10-K/20-F que contiene el ejercicio fiscal
+        `fy_objetivo`. A diferencia de "última presentación de cualquier tipo"
+        (que puede ser un trámite sin relación con las cuentas), esto es la
+        fecha real de publicación de las cifras que se están usando."""
+        gaap = facts.get("facts", {}).get("us-gaap", {})
+        for tag in tags:
+            node = gaap.get(tag)
+            if not node:
+                continue
+            mejor = None
+            for unit_vals in node.get("units", {}).values():
+                for item in unit_vals:
+                    if item.get("form") not in ("10-K", "10-K/A", "20-F"):
+                        continue
+                    if item.get("fy") != fy_objetivo or item.get("fp") != "FY":
+                        continue
+                    start, end = item.get("start"), item.get("end")
+                    if not start or not end:
+                        continue
+                    days = (datetime.fromisoformat(end) - datetime.fromisoformat(start)).days
+                    if not 300 <= days <= 400:
+                        continue
+                    filed = item.get("filed", "")
+                    if filed and (mejor is None or filed > mejor):
+                        mejor = filed
+            if mejor:
+                return mejor
+        return None
+
     def fetch(self, ticker: str) -> Fundamentals:
         cik, name = self.resolve_cik(ticker)
         facts = self._get(f"{self.BASE}/api/xbrl/companyfacts/CIK{cik}.json")
@@ -280,6 +311,14 @@ class SecEdgarProvider:
         debt = (last("long_term_debt") or 0.0) + (last("short_term_debt") or 0.0)
         cash = (last("cash") or 0.0) + (last("short_term_investments") or 0.0)
 
+        fecha_cifras = self._fecha_presentacion(facts, CONCEPTS["revenue"], fys[-1])
+        as_of = (
+            date.fromisoformat(fecha_cifras) if fecha_cifras
+            else date.fromisoformat(submissions.get("filings", {})
+                                     .get("recent", {})
+                                     .get("filingDate", [date.today().isoformat()])[0])
+        )
+
         f = Fundamentals(
             ticker=ticker.upper(),
             name=name,
@@ -288,9 +327,7 @@ class SecEdgarProvider:
             currency="USD",
             is_financial=is_financial,
             fiscal_years=fys,
-            as_of=date.fromisoformat(submissions.get("filings", {})
-                                     .get("recent", {})
-                                     .get("filingDate", [date.today().isoformat()])[0]),
+            as_of=as_of,
             revenue=serie("revenue"),
             gross_profit=serie("gross_profit"),
             ebit=serie("ebit"),

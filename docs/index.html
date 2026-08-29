@@ -267,15 +267,18 @@
     font-size: 13.5px;
     line-height: 1.6;
     color: var(--paper-dim);
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
   .entrada.abierta .informe { display: block; }
   .informe h1, .informe h2 { font-family: 'IBM Plex Serif', serif; color: var(--paper); font-size: 15px; margin: 16px 0 6px; }
   .informe h1:first-child, .informe h2:first-child { margin-top: 10px; }
   .informe strong { color: var(--paper); }
-  .informe table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
-  .informe th, .informe td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); }
-  .informe ul { padding-left: 18px; }
-  .informe code { font-family: 'IBM Plex Mono', monospace; }
+  .informe p, .informe li { overflow-wrap: break-word; word-break: break-word; }
+  .informe table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 8px 0; font-size: 12.5px; }
+  .informe th, .informe td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); overflow-wrap: break-word; word-break: break-word; }
+  .informe ul { padding-left: 18px; margin: 6px 0; }
+  .informe code { font-family: 'IBM Plex Mono', monospace; overflow-wrap: anywhere; }
 
   .meta-informe {
     padding: 0 16px 14px;
@@ -442,7 +445,7 @@ $buscar.addEventListener("input", (e) => {
 
 async function cargar() {
   try {
-    const client = supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+    const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { data, error } = await client
       .from("v_tesis_completa")
       .select("*");
