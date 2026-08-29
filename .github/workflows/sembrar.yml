@@ -1,0 +1,25 @@
+name: Sembrar universo (una sola vez)
+
+on:
+  workflow_dispatch:   # solo manual — lo lanzas tú, una vez, desde la pestaña Actions
+
+jobs:
+  sembrar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r backend/requirements.txt
+
+      - name: Cargar el universo completo de tickers en Supabase
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python run_universo.py --sembrar

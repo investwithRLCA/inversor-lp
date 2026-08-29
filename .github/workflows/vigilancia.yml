@@ -1,0 +1,58 @@
+name: Vigilancia diaria de precio
+
+on:
+  schedule:
+    - cron: "0 12 * * *"   # 12:00 UTC — ~14:00 en España en verano, 13:00 en invierno
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # necesario para poder abrir el Issue de aviso
+
+jobs:
+  vigilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r backend/requirements.txt
+
+      - name: Comprobar precios de las empresas en VIGILAR
+        working-directory: backend
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python vigilar.py --salida alertas.json
+
+      - name: Abrir un Issue si alguna ha cruzado su precio de entrada
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const ruta = 'backend/alertas.json';
+            if (!fs.existsSync(ruta)) {
+              console.log('vigilar.py no generó salida; nada que hacer.');
+              return;
+            }
+            const alertas = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+            if (alertas.length === 0) {
+              console.log('Ninguna empresa ha cruzado su precio de entrada hoy.');
+              return;
+            }
+            const fecha = new Date().toISOString().slice(0, 10);
+            const cuerpo = alertas.map(a =>
+              `- **${a.ticker}** (${a.nombre || 'sin nombre'}): precio actual ${a.precio_actual} ≤ precio de entrada ${a.precio_entrada}`
+            ).join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Vigilancia ${fecha}: ${alertas.length} empresa(s) en zona de compra`,
+              body: cuerpo,
+              labels: ['vigilancia'],
+            });

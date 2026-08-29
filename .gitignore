@@ -1,0 +1,11 @@
+# Entorno virtual y caché de Python — cada máquina se lo genera sola
+.venv/
+__pycache__/
+*.pyc
+
+# Claves y secretos — NUNCA en el repositorio, ni siquiera en uno privado
+entorno.ps1
+.env
+
+# Salidas de ejecuciones locales
+alertas.json

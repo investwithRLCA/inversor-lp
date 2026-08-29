@@ -1,0 +1,39 @@
+name: Barrido diario del universo
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC — ajusta la hora si quieres otro momento
+  workflow_dispatch:
+    inputs:
+      lote:
+        description: "Cuántos tickers procesar en esta ejecución"
+        default: "40"
+      max_ia:
+        description: "Cuántos, como máximo, llegan a la IA en esta ejecución"
+        default: "6"
+
+jobs:
+  barrido:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r backend/requirements.txt
+
+      - name: Procesar el siguiente lote
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: >
+          python run_universo.py
+          --lote ${{ github.event.inputs.lote || '40' }}
+          --max-ia ${{ github.event.inputs.max_ia || '6' }}
