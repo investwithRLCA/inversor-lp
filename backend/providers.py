@@ -258,6 +258,13 @@ class SecEdgarProvider:
         # eje temporal común: años con ingresos
         fys = sorted(flows["revenue"].keys())
         if not fys:
+            gaap_vacio = not facts.get("facts", {}).get("us-gaap")
+            tiene_ifrs = bool(facts.get("facts", {}).get("ifrs-full"))
+            if gaap_vacio and tiene_ifrs:
+                raise ValueError(
+                    f"{ticker}: informa bajo IFRS (emisor extranjero, probablemente 20-F), "
+                    "no US-GAAP — no soportado todavía, ver limitaciones en el README"
+                )
             raise ValueError(f"{ticker}: EDGAR no devuelve serie de ingresos utilizable")
 
         def serie(key: str, scale: float = M) -> list[float]:
