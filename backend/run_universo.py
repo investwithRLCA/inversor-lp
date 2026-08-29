@@ -12,8 +12,8 @@ Dos fases en cada lote:
      pausa entre llamadas para no saturar el nivel gratuito de Gemini.
 
     python run_universo.py --sembrar              # una sola vez: carga el universo completo
-    python run_universo.py                        # procesa el siguiente lote (por defecto 40)
-    python run_universo.py --lote 100 --max-ia 8
+    python run_universo.py                        # procesa el siguiente lote (por defecto 60, hasta 15 con IA)
+    python run_universo.py --lote 100 --max-ia 25
     python run_universo.py --solo-cribado          # ningún ticker de este lote llega a la IA
 """
 
@@ -86,8 +86,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Barrido del universo completo, por lotes.")
     ap.add_argument("--sembrar", action="store_true",
                      help="carga el universo completo en universe_progreso (una vez)")
-    ap.add_argument("--lote", type=int, default=40, help="tickers a procesar en esta ejecución")
-    ap.add_argument("--max-ia", type=int, default=6,
+    ap.add_argument("--lote", type=int, default=60, help="tickers a procesar en esta ejecución")
+    ap.add_argument("--max-ia", type=int, default=15,
                      help="cuántos, como máximo, llegan a la IA en esta ejecución")
     ap.add_argument("--solo-cribado", action="store_true", help="ningún ticker llega a la IA")
     args = ap.parse_args()

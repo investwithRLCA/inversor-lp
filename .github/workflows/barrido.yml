@@ -7,10 +7,10 @@ on:
     inputs:
       lote:
         description: "Cuántos tickers procesar en esta ejecución"
-        default: "40"
+        default: "60"
       max_ia:
         description: "Cuántos, como máximo, llegan a la IA en esta ejecución"
-        default: "6"
+        default: "15"
 
 jobs:
   barrido:
@@ -35,5 +35,5 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: >
           python run_universo.py
-          --lote ${{ github.event.inputs.lote || '40' }}
-          --max-ia ${{ github.event.inputs.max_ia || '6' }}
+          --lote ${{ github.event.inputs.lote || '60' }}
+          --max-ia ${{ github.event.inputs.max_ia || '15' }}
