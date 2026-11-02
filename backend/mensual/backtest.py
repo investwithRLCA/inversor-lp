@@ -458,9 +458,9 @@ def informe_md(panel: Panel, p: Params, aportacion: float, n_sim: int, base: dic
     A(("### ✅ Pasa los criterios fijados de antemano\n\nEso significa solo que NO queda "
        "descartada: el backtest solo puede decir «no», nunca «sí» (ver «Cómo leerlo»). "
        "El siguiente paso sería probarla en paper trading.\n") if veredicto_ok else
-      ("### ❌ No pasa los criterios fijados de antemano\n\nNo compensa construir el resto "
-       "del módulo con estas reglas: ni con datos que favorecen a la estrategia consigue "
-       "una ventaja clara sobre aportar al S&P 500.\n"))
+      ("### ❌ No pasa los criterios fijados de antemano\n\nNo compensa usar estas reglas "
+       "tal cual: ni con datos que favorecen a la estrategia consigue una ventaja clara "
+       "sobre aportar al S&P 500.\n"))
     for texto, ok, detalle in criterios:
         A(f"- {'✅' if ok else '❌'} {texto}: **{detalle}**")
     A("")
@@ -513,7 +513,7 @@ def informe_md(panel: Panel, p: Params, aportacion: float, n_sim: int, base: dic
           f"{_d((v['res_etf'].xirr_neto - spy.xirr_neto) * 100)} |")
     A("")
 
-    A(_anexo_nunca(panel, variantes, spy, ew))
+    A(_anexo_nunca(panel, variantes, spy, ew, p, aportacion))
 
     A("## Año a año (rentabilidad ponderada por tiempo)\n")
     A("| Año | Estrategia | S&P 500 | Control superv. | Diferencia vs S&P 500 (puntos) |")
@@ -546,11 +546,27 @@ def informe_md(panel: Panel, p: Params, aportacion: float, n_sim: int, base: dic
     return "\n".join(L)
 
 
+def panel_sin(panel: Panel, indices) -> Panel:
+    """Copia del panel donde las empresas `indices` no existen (sin precio ni
+    señales): la estrategia nunca podrá comprarlas."""
+    px = panel.px.copy()
+    sen = []
+    idx = list(indices)
+    for s_ in panel.sen:
+        d = {k: v.copy() for k, v in s_.items()}
+        for k in d:
+            d[k][idx] = np.nan
+        sen.append(d)
+    px[:, idx] = np.nan
+    return Panel(panel.tickers, panel.fechas, px, panel.spy, sen, panel.sector)
+
+
 def _twr(r: np.ndarray) -> float:
     return float(np.prod(1.0 + r) - 1.0)
 
 
-def _anexo_nunca(panel: Panel, variantes: list[dict], spy: Resultado, ew: Resultado) -> str:
+def _anexo_nunca(panel: Panel, variantes: list[dict], spy: Resultado, ew: Resultado,
+                 p: Params | None = None, aportacion: float | None = None) -> str:
     """Mira, DESPUÉS de ver el resultado, la variante «comprar sin vender nunca»:
     ¿su ventaja es robusta o depende de unas pocas empresas / de una época?"""
     v = next((x for x in variantes if x["venta"] == "nunca" and x["estab"]), None)
@@ -596,11 +612,25 @@ def _anexo_nunca(panel: Panel, variantes: list[dict], spy: Resultado, ew: Result
             L.append(f"| {panel.tickers[i]} | {_n(cos[i])} $ | {_n(val[i])} $ | "
                      f"{_d(val[i] / cos[i], 1, False)}× | {_pc(max(gan[i], 0) / total_gan, 0)} |")
         L.append("")
+    if total_gan > 0 and p is not None and aportacion:
+        pn = dataclasses.replace(p, venta="nunca", estabilizacion=True)
+        mejores = list(np.argsort(-gan))
+        L.append("**¿Qué pasa si quitamos las mejores?** Misma regla de compra y sin vender, pero "
+                 "como si esas empresas no existieran en el universo:\n")
+        L.append("| Quitando… | Rentab. anual (tras imp.) | vs S&P 500 (puntos) |")
+        L.append("|---|---:|---:|")
+        L.append(f"| nada | {_pc(res.xirr_neto)} | {_d((res.xirr_neto - spy.xirr_neto) * 100)} |")
+        for n_q in (1, 3, 5):
+            r2 = simular(panel_sin(panel, mejores[:n_q]), pn, aportacion)
+            quitadas = ", ".join(panel.tickers[i] for i in mejores[:n_q])
+            L.append(f"| {quitadas} | {_pc(r2.xirr_neto)} | {_d((r2.xirr_neto - spy.xirr_neto) * 100)} |")
+        L.append("")
     venden = [x for x in variantes if x["venta"] != "nunca"]
     peor = sum(1 for x in venden if x["res"].xirr_neto < spy.xirr_neto)
-    L.append(f"Lo que sí se puede decir: en {peor} de las {len(venden)} variantes que venden por "
-             f"precio, la estrategia queda por debajo del S&P 500. Vender ganadoras solo porque "
-             f"«ya están caras frente a su historia» tiende a cortar justo las que más suben.\n")
+    L.append(f"En {peor} de las {len(venden)} variantes que venden por precio, la estrategia queda "
+             f"por debajo del S&P 500." + (
+                 " Vender ganadoras solo porque «ya están caras frente a su historia» tiende a cortar "
+                 "justo las que más suben.\n" if peor * 2 >= len(venden) else "\n"))
     return "\n".join(L)
 
 
