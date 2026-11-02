@@ -1,0 +1,46 @@
+name: Refresco de cartera
+
+# Vuelve a pasar por el embudo completo (datos + cribado + IA) a las
+# empresas que YA tienen un análisis guardado, empezando por las más
+# interesantes (COMPRA_FUERTE, COMPRA, VIGILAR) y, dentro de cada grupo,
+# por las que lleva más tiempo sin revisarse. Totalmente independiente del
+# barrido de descubrimiento (barrido.yml): esta cola es corta (solo
+# empresas ya conocidas) y se repite todos los días.
+#
+# Casi siempre es gratis: si no ha salido ningún dato nuevo desde el
+# último análisis, reutiliza la caché y no gasta ninguna llamada a la IA.
+
+on:
+  schedule:
+    - cron: "0 8 * * *"         # todos los días a las 08:00 UTC
+  workflow_dispatch:
+    inputs:
+      limite:
+        description: "Cuántas empresas ya analizadas se refrescan"
+        required: false
+        default: "30"
+
+jobs:
+  refresco:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Refrescar cartera ya analizada
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python refrescar.py --limite ${{ github.event.inputs.limite || '30' }}

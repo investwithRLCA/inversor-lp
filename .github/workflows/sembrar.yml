@@ -1,7 +1,12 @@
-name: Sembrar universo (una sola vez)
+name: Sembrar universo
+
+# Carga el listado completo de tickers EDGAR (~10.000) en universe_progreso.
+# Se ejecuta UNA SOLA VEZ (o si alguna vez quieres forzar un re-sembrado;
+# no borra el progreso de los que ya existan, así que repetirlo no hace daño).
+# Solo manual: no tiene sentido en un cron, por eso no lleva "schedule".
 
 on:
-  workflow_dispatch:   # solo manual — lo lanzas tú, una vez, desde la pestaña Actions
+  workflow_dispatch: {}
 
 jobs:
   sembrar:
@@ -14,9 +19,10 @@ jobs:
           python-version: "3.12"
 
       - name: Instalar dependencias
-        run: pip install -r backend/requirements.txt
+        working-directory: backend
+        run: pip install -r requirements.txt
 
-      - name: Cargar el universo completo de tickers en Supabase
+      - name: Sembrar universo completo
         working-directory: backend
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
