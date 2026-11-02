@@ -367,6 +367,7 @@ def simular(panel: Panel, p: Params, aportacion: float, selector: str = "senal",
         "caja_media": float(frac_caja.mean()),
         "tenencia_media": float(np.mean([v[4] for v in ventas])) if ventas else float("nan"),
         "abiertas": int((acc > 0).sum()),
+        "pos_valor": val_pos.copy(), "pos_coste": coste.copy(),
     }
     return _resultado(nombre, panel.fechas, valor, r, aportacion, imp_pagado, latente, extra)
 
@@ -512,6 +513,8 @@ def informe_md(panel: Panel, p: Params, aportacion: float, n_sim: int, base: dic
           f"{_d((v['res_etf'].xirr_neto - spy.xirr_neto) * 100)} |")
     A("")
 
+    A(_anexo_nunca(panel, variantes, spy, ew))
+
     A("## Año a año (rentabilidad ponderada por tiempo)\n")
     A("| Año | Estrategia | S&P 500 | Control superv. | Diferencia vs S&P 500 (puntos) |")
     A("|---|---:|---:|---:|---:|")
@@ -540,6 +543,64 @@ def informe_md(panel: Panel, p: Params, aportacion: float, n_sim: int, base: dic
       "arrastre entre años ni fiscalidad de dividendos ni cambio dólar/euro.")
     A("- **Ejecución idealizada.** Precio de cierre del último día hábil, comisión fija y sin "
       "deslizamiento. En acciones muy líquidas del S&P 500 es razonable.")
+    return "\n".join(L)
+
+
+def _twr(r: np.ndarray) -> float:
+    return float(np.prod(1.0 + r) - 1.0)
+
+
+def _anexo_nunca(panel: Panel, variantes: list[dict], spy: Resultado, ew: Resultado) -> str:
+    """Mira, DESPUÉS de ver el resultado, la variante «comprar sin vender nunca»:
+    ¿su ventaja es robusta o depende de unas pocas empresas / de una época?"""
+    v = next((x for x in variantes if x["venta"] == "nunca" and x["estab"]), None)
+    if v is None:
+        return ""
+    res = v["res"]
+    L = ["## Anexo: ¿es real la ventaja de «comprar y no vender nunca»?\n"]
+    L.append("**Ojo:** esta variante NO era la elegida de antemano; se mira aquí porque su resultado "
+             "llama la atención, y mirar lo que ha salido bien después de verlo es justo lo que "
+             "engaña. Es una pista para investigar, no una prueba.\n")
+
+    M = len(res.r_mensual)
+    mitad = M // 2
+    a, b = slice(0, mitad), slice(mitad, M)
+    L.append(f"**¿Se repite en las dos mitades del periodo?** (rentabilidad ponderada por tiempo, "
+             f"sin contar aportaciones)\n")
+    L.append("| Tramo | Sin vender nunca | S&P 500 | Control de supervivencia |")
+    L.append("|---|---:|---:|---:|")
+    for nombre, sl in ((f"{res.fechas[0]:%m/%Y} → {res.fechas[mitad - 1]:%m/%Y}", a),
+                       (f"{res.fechas[mitad]:%m/%Y} → {res.fechas[-1]:%m/%Y}", b)):
+        L.append(f"| {nombre} | {_pc(_twr(res.r_mensual[sl]))} | {_pc(_twr(spy.r_mensual[sl]))} | "
+                 f"{_pc(_twr(ew.r_mensual[sl]))} |")
+    L.append("")
+
+    val, cos = res.extra["pos_valor"], res.extra["pos_coste"]
+    gan = val - cos
+    total_gan = float(gan[gan > 0].sum())
+    orden = np.argsort(-gan)[:10]
+    if total_gan > 0:
+        top5 = float(gan[np.argsort(-gan)[:5]].sum()) / total_gan
+        L.append(f"**¿Depende de unas pocas empresas?** Las 5 mejores posiciones aportan el "
+                 f"**{_pc(top5, 0)}** de todas las ganancias latentes. " + (
+                     "Es mucha concentración: si la ventaja son 3-4 nombres que hoy son gigantes, "
+                     "es casi seguro sesgo de supervivencia (están en el universo precisamente "
+                     "porque acabaron bien).\n" if top5 >= 0.6 else
+                     "El reparto es amplio, lo que resta fuerza a la explicación de «unos pocos "
+                     "premios gordos» (el sesgo de supervivencia sigue ahí, pero no es solo eso).\n"))
+        L.append("| Empresa | Invertido | Valor hoy | Múltiplo | % de las ganancias |")
+        L.append("|---|---:|---:|---:|---:|")
+        for i in orden:
+            if cos[i] <= 0:
+                continue
+            L.append(f"| {panel.tickers[i]} | {_n(cos[i])} $ | {_n(val[i])} $ | "
+                     f"{_d(val[i] / cos[i], 1, False)}× | {_pc(max(gan[i], 0) / total_gan, 0)} |")
+        L.append("")
+    venden = [x for x in variantes if x["venta"] != "nunca"]
+    peor = sum(1 for x in venden if x["res"].xirr_neto < spy.xirr_neto)
+    L.append(f"Lo que sí se puede decir: en {peor} de las {len(venden)} variantes que venden por "
+             f"precio, la estrategia queda por debajo del S&P 500. Vender ganadoras solo porque "
+             f"«ya están caras frente a su historia» tiende a cortar justo las que más suben.\n")
     return "\n".join(L)
 
 
