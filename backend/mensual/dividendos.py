@@ -295,7 +295,7 @@ def _suma(xs, k=3):
     return sum(xs) if xs else None
 
 
-def evaluar_empresa(f, m, dps: float | None, reglas: ReglasDividendos) -> dict:
+def evaluar_empresa(f, m, dps: float | None, reglas: ReglasDividendos, especiales: int = 0) -> dict:
     """`f` = providers.Fundamentals, `m` = quant_filter.Metrics (o dict con los mismos
     campos). Devuelve las cifras de seguridad y los motivos de veto."""
     g = (lambda k: getattr(m, k, None)) if not isinstance(m, dict) else (lambda k: m.get(k))
@@ -307,7 +307,12 @@ def evaluar_empresa(f, m, dps: float | None, reglas: ReglasDividendos) -> dict:
         mcap = f.price * f.shares_diluted[-1]
 
     div_cash = _suma(f.dividends_paid)
-    if (not div_cash) and dps and f.shares_diluted:
+    k_anios = min(3, len(f.dividends_paid or [])) or 3
+    if especiales and dps and f.shares_diluted:
+        # el efectivo pagado incluye los especiales: se mide la cobertura sólo del dividendo regular
+        div_cash = dps * f.shares_diluted[-1] * k_anios
+        aviso.append("Ha pagado dividendos especiales: la cobertura se mide solo con el dividendo regular.")
+    elif (not div_cash) and dps and f.shares_diluted:
         div_cash = dps * f.shares_diluted[-1] * 3   # aprox. de 3 años
         aviso.append("La SEC no detalla el dividendo pagado: cobertura estimada con el dividendo por acción.")
 
@@ -458,8 +463,9 @@ def razones(an: dict, emp: dict, rend: dict, bench: dict) -> list[str]:
     out: list[str] = []
     r5 = rend.get("5a") or rend.get("3a")
     lab = "5 años" if rend.get("5a") else "3 años"
+    n_sub = an["subidas_5a"]
     out.append(f"Lleva {an['anios_pagando']:.0f} años pagando dividendo y {an['anios_sin_recorte']:.0f} sin recortarlo"
-               + (f"; lo ha subido {an['subidas_5a']} veces en 5 años." if an["subidas_5a"] else "; lo mantiene estable."))
+               + (f"; lo ha subido {n_sub} {'vez' if n_sub == 1 else 'veces'} en 5 años." if n_sub else "; lo mantiene estable."))
     cg = an.get("cagr_5a") if an.get("cagr_5a") is not None else an.get("cagr_3a")
     if cg is not None:
         out.append(f"El dividendo por acción crece un {cg:+.1f} % anual.")
@@ -561,7 +567,7 @@ def generar_seccion(
             sin_datos += 1
             continue
         f, m = res
-        emp = evaluar_empresa(f, m, x["an"].get("dps"), r)
+        emp = evaluar_empresa(f, m, x["an"].get("dps"), r, x["an"].get("especiales", 0))
         if emp["veto"]:
             vetadas_emp += 1
             for v in emp["veto"]:
@@ -679,7 +685,7 @@ def universo_russell2000() -> tuple[list[dict], str]:
             return filas, "Russell 2000 (componentes de IWM)"
         print(f"Aviso: el fichero de iShares trae solo {len(filas)} empresas; se prueba con el S&P 600.")
     except Exception as e:  # noqa: BLE001
-        print(f"Aviso: no se pudo leer la lista de IWM en iShares ({e}); se prueba con el S&P 600.")
+        print(f"Aviso: no se pudo leer la lista de IWM en iShares ({type(e).__name__}: {e}); se prueba con el S&P 600.")
     try:
         r = requests.get(URL_SP600, headers=UA, timeout=60)
         r.raise_for_status()
