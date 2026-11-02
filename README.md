@@ -109,11 +109,21 @@ clave nueva).
 ## Módulo mensual de oportunidades (experimental)
 
 Complemento del bot de largo plazo, pensado para ir **mes a mes**: tú decides cuánto dinero
-metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones**. Parte de tu lista
-(COMPRA_FUERTE, COMPRA, VIGILAR: ya pasaron el cribado fundamental) y busca las que están
-baratas **frente a sí mismas** (su propio rango de los últimos ~5 años: «siempre ha estado
-entre 80 y 120 y ahora está en 60»), sin estar hundidas y habiendo dejado de caer. Es un modelo
-**solo de acciones**: sin ETF de relleno; si un mes nada está barato, el dinero espera.
+metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones**. Parte de **todas las
+empresas que han pasado el cribado cuantitativo del bot** (calidad, caja, solvencia: cientos, no solo
+las que ya tienen análisis de IA) y las reparte en **tres paquetes por horizonte**. Es un modelo
+**solo de acciones**: sin ETF de relleno; si un mes nada cumple, el dinero espera.
+
+| Paquete | Qué busca | ¿Probado? |
+|---|---|---|
+| **1–3 años** · Descuento con tesis | Empresas sólidas **baratas frente a sí mismas** (su rango de ~5 años: «siempre ha estado entre 80 y 120 y ahora está en 60»), sin estar hundidas y habiendo dejado de caer. | Solo la regla de precio, en el histórico: **sin ventaja demostrada** (ver abajo). |
+| **3–5 años** · Calidad a precio razonable | ROIC ≥ 12 %, ingresos ≥ 3 %/año, caja libre ≥ 6 % de ventas, deuda moderada y a un precio razonable (caja libre, PER o EV/EBIT bajos), sin estar disparada ni en caída libre. Sin bancos. | **No** (necesita datos financieros de cada fecha antigua). Se prueba en vivo. |
+| **5+ años** · Compounders | ROIC medio ≥ 15 %, ingresos ≥ 6 %/año, caja libre positiva 4 años, deuda neta/EBITDA ≤ 2,5, sin diluir. Se ordena por calidad y crecimiento; el precio se mide frente a lo que gana, no frente a su gráfico (un compounder vive en máximos). Sin bancos. | **No.** Se prueba en vivo. |
+
+Las empresas se marcan con su **nivel**: *A* (análisis de IA favorable: COMPRA, VIGILAR) o *B* («solo
+cribado»: aún sin análisis de IA, léelas con más cautela). Las que la IA ya descartó (NO_INVERTIBLE,
+DESCARTE) no entran en ningún paquete. La IA y los chequeos **solo pueden quitar o avisar, nunca
+añadir**.
 
 ### Qué dijo la prueba histórica (y por qué el módulo es como es)
 
@@ -141,14 +151,31 @@ se diseñaron **NO pasaron** los criterios fijados antes de ver los resultados:
 ### Cómo funciona cada mes
 
 1. `mensual.yml` (día 1 de cada mes, o a mano) ejecuta `python -m mensual.recomendador`.
-2. **Núcleo = lo que se probó:** señales de precio vs. su propio rango, máx. 4 candidatas y 2 por sector.
-3. **Frenos que solo pueden quitar o avisar, nunca añadir:** precio por encima del rango de valor de la
-   tesis; chequeo del último trimestre publicado en la SEC (ingresos y margen interanuales); y la IA
-   (Gemini) lee los titulares de Finnhub y dice si la caída parece temporal o estructural. Solo veta
-   «estructural con confianza alta»; si los titulares no explican la caída, dice «incierto».
-4. Guarda el informe en Supabase (`mensual_informes`) y abre un Issue con las candidatas.
-5. La pestaña **Mensual** del Vigía lee ese informe: escribes cuánto vas a invertir y reparte a partes
-   iguales con tope por empresa (lo que no cabe NO se fuerza: se guarda para el mes siguiente).
+2. Carga el universo desde Supabase (último cribado de cada empresa, con sus métricas) y descarga sus
+   precios (Yahoo, gratis).
+3. **Paquete 1–3 años = lo que se probó:** señales de precio vs. su propio rango, máx. 4 y 2 por sector.
+   **Paquetes 3–5 y 5+:** puertas de calidad/crecimiento/precio y una puntuación 0-100 (calidad,
+   crecimiento, valoración, momento de 12 meses); máx. 6 y 8 empresas, 2 por sector.
+4. **Frenos que solo pueden quitar o avisar, nunca añadir:** precio por encima del rango de valor de la
+   tesis; chequeo del último trimestre publicado en la SEC (ingresos y margen interanuales); y, solo en
+   el paquete corto, la IA (Gemini) lee los titulares de Finnhub y dice si la caída parece temporal o
+   estructural. Solo veta «estructural con confianza alta»; si los titulares no explican la caída,
+   dice «incierto».
+5. **Seguimiento automático:** calcula cuánto habrían rendido las elecciones de los informes anteriores
+   (el primero de cada mes, para que no se pueda repetir hasta que salga uno bonito) frente al S&P 500
+   y frente al «resto del universo» (todas las elegibles de ese mes a partes iguales). Si los paquetes
+   baten al índice pero no al resto del universo, lo que funciona es el filtro de calidad, no la
+   selección. Además separa las elegidas con IA (A) de las «solo cribado» (B) para ver si la IA aporta.
+6. Guarda el informe en Supabase (`mensual_informes`) y abre un Issue con las elegidas de cada paquete.
+7. La pestaña **Mensual** del Vigía lee ese informe: eliges paquete, escribes cuánto vas a invertir y
+   reparte a partes iguales con tope por empresa (lo que no cabe NO se fuerza: se guarda para el mes
+   siguiente). Las compras se etiquetan con su paquete y ves el resultado por horizonte.
+
+> **Honestidad sobre «encontrar ganadoras».** Nada de esto está demostrado que bata al S&P 500. El
+> backtest solo probó el precio, y sin ventaja. Los paquetes 3–5 y 5+ usan criterios clásicos de
+> calidad que no se pueden comprobar en el pasado con datos gratuitos (haría falta saber qué se
+> publicaba en cada fecha: usar las cuentas de hoy contaría el futuro como si se supiera). La
+> respuesta honesta es el seguimiento en vivo: 12–24 meses de cohortes mensuales.
 
 ### Privacidad: tu cartera nunca sale de tu móvil
 
@@ -166,7 +193,9 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `backend/mensual/estrategia.py` | Las reglas (señales, candidatas, reparto, venta) como funciones puras; las usan el backtest y el recomendador. |
 | `backend/mensual/backtest.py` | Motor del backtest, controles (S&P 500, supervivencia, azar), veredicto, anexo de robustez. |
 | `backend/mensual/precios.py` | Descarga de precios (Yahoo Finance, gratis) y universo S&P 500 con su sector. |
-| `backend/mensual/recomendador.py` | El informe mensual (núcleo + frenos) y el Markdown del Issue. |
+| `backend/mensual/recomendador.py` | El informe mensual (universo, tres paquetes, frenos, seguimiento) y el Markdown del Issue. |
+| `backend/mensual/paquetes.py` | Reglas y puntuación de los paquetes 3–5 y 5+ años (funciones puras, sin red). |
+| `backend/mensual/seguimiento.py` | Seguimiento: cuánto habrían rendido las elecciones pasadas frente al S&P 500 y al universo. |
 | `backend/mensual/salud.py` | Chequeo del último trimestre (EDGAR, gratis). |
 | `backend/mensual/explicacion.py` | «¿Por qué ha caído?»: titulares + Gemini, con veto solo si «estructural + alta». |
 | `db/006_mensual.sql` | Tabla del informe y vista pública de solo lectura (aplicar en el SQL Editor de Supabase). |

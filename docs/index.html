@@ -350,8 +350,9 @@
   .m-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
   .m-tk { font: 600 18px 'IBM Plex Serif', serif; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .m-nombre { color: var(--slate); font-size: 12px; margin-top: 2px; }
-  .m-precio { text-align: right; font-size: 16px; font-weight: 500; white-space: nowrap; }
-  .m-precio small { display: block; font-size: 11px; color: var(--slate); font-weight: 400; margin-top: 2px; }
+  .m-precio { text-align: right; font-size: 16px; font-weight: 500; white-space: nowrap; max-width: 52%; }
+  .m-precio small { display: block; font-size: 11px; color: var(--slate); font-weight: 400; margin-top: 2px; white-space: normal; }
+  .m-cab > div:first-child { min-width: 0; }
   .m-compra { margin-top: 10px; font-size: 14px; line-height: 1.5; }
   .m-linea { margin-top: 8px; }
   .m-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -385,6 +386,15 @@
   .m-fichero { display: inline-block; }
   .m-notas ul { padding-left: 18px; font-size: 13px; line-height: 1.6; color: var(--paper-dim); }
   .m-notas li { margin-bottom: 6px; }
+  .m-paquetes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 12px; }
+  .m-paq { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px; border-radius: 12px;
+    border: 1px solid var(--hairline); background: var(--ink-3); color: var(--paper-dim); cursor: pointer; font-family: 'IBM Plex Sans', sans-serif; }
+  .m-paq-h { font-size: 14px; font-weight: 600; }
+  .m-paq-n { font-size: 11px; color: var(--slate); }
+  .m-paq[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--brass); box-shadow: inset 0 0 0 1px var(--brass); }
+  .m-paq[aria-pressed="true"] .m-paq-n { color: var(--brass); }
+  .m-paq-info { margin: 4px 0 8px; font-size: 14px; line-height: 1.5; }
+  .m-paq-info p { margin: 6px 0; }
   .m-card code { font-family: 'IBM Plex Mono', monospace; background: var(--ink-3); padding: 1px 5px; border-radius: 4px; }
 </style>
 </head>
@@ -593,8 +603,8 @@ async function cargar() {
 
 cargar();
 </script>
-<script src="mensual.js?v=1"></script>
-<script src="mensual-ui.js?v=1"></script>
+<script src="mensual.js?v=2"></script>
+<script src="mensual-ui.js?v=2"></script>
 
 </body>
 </html>

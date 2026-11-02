@@ -16,6 +16,7 @@
   const TOPE_POSICION = 0.25;
   const MESES_REVISION = 24;
   const TESIS_ANTIGUA_DIAS = 200;
+  const PAQUETES = ["corto", "medio", "largo"];       // 1-3 años, 3-5 años, 5+ años
 
   // ───────────────────────── fechas ─────────────────────────
 
@@ -46,8 +47,10 @@
     if (!(precio > 0)) return { error: "El precio debe ser mayor que 0." };
     if (!(comision >= 0)) return { error: "La comisión no puede ser negativa." };
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || isNaN(ms(fecha))) return { error: "La fecha no es válida." };
-    return { op: { id: o.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
-                   fecha, ticker, tipo, acciones, precio, comision } };
+    const op = { id: o.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
+                 fecha, ticker, tipo, acciones, precio, comision };
+    if (PAQUETES.includes(o.paq)) op.paq = o.paq;          // opcional: de qué paquete salió la compra
+    return { op };
   }
 
   /** Posiciones abiertas y ventas realizadas, por el método FIFO (el que exige
@@ -62,7 +65,7 @@
     for (const o of orden) {
       const L = (lotes[o.ticker] = lotes[o.ticker] || []);
       if (o.tipo === "compra") {
-        L.push({ fecha: o.fecha, acciones: o.acciones, coste: o.acciones * o.precio + o.comision });
+        L.push({ fecha: o.fecha, acciones: o.acciones, coste: o.acciones * o.precio + o.comision, paq: o.paq || null });
         continue;
       }
       let falta = o.acciones;
@@ -93,7 +96,9 @@
       const acciones = L.reduce((s, l) => s + l.acciones, 0);
       if (acciones > 1e-9) {
         const coste = L.reduce((s, l) => s + l.coste, 0);
-        posiciones[t] = { acciones, coste, costeMedio: coste / acciones, desde: L[0].fecha, lotes: L.map(l => ({ ...l })) };
+        const conPaq = L.find((l) => l.paq);
+        posiciones[t] = { acciones, coste, costeMedio: coste / acciones, desde: L[0].fecha,
+                          paq: conPaq ? conPaq.paq : null, lotes: L.map(l => ({ ...l })) };
       }
     }
     return { posiciones, realizadas, errores };
@@ -112,7 +117,7 @@
       const valor = precio != null ? p.acciones * precio : null;
       if (valor != null) total += valor;
       filas.push({ ticker: t, nombre: e ? e.n : "", acciones: p.acciones, coste: p.coste,
-                   costeMedio: p.costeMedio, desde: p.desde, precio, valor, emp: e,
+                   costeMedio: p.costeMedio, desde: p.desde, paq: p.paq || null, precio, valor, emp: e,
                    pl: valor != null ? valor - p.coste : null,
                    plPct: valor != null && p.coste > 0 ? valor / p.coste - 1 : null });
     }
@@ -137,6 +142,10 @@
     if (!e || e.e === "sin_datos") {
       m.push("Sin precio ni tesis en el Vigía: no puedo valorarla ni vigilarla."); sube("revisar");
     } else {
+      if (e.qp === false) {
+        m.push("Ya no pasa el cribado cuantitativo del bot (calidad, caja o solvencia han empeorado " +
+               "en sus últimas cuentas). Relee la tesis: es motivo para revisar, no para vender a ciegas."); sube("revisar");
+      }
       if (e.v === "DESCARTE" || e.v === "NO_INVERTIBLE") {
         m.push("Tesis rota: el bot de largo plazo ya la marca como " + e.v.replace("_", " ") +
                ". Es el motivo serio para plantearse vender."); sube("rota");
@@ -162,6 +171,19 @@
       sube("revisar");
     }
     return { nivel, motivos: m };
+  }
+
+  /** Valor y coste de las posiciones agrupados por paquete (los que no tienen
+   *  paquete anotado van a «sin»). Solo las que tienen precio. */
+  function resumenPorPaquete(filas) {
+    const out = {};
+    for (const f of filas) {
+      if (f.valor == null) continue;
+      const k = PAQUETES.includes(f.paq) ? f.paq : "sin";
+      const o = (out[k] = out[k] || { valor: 0, coste: 0, n: 0 });
+      o.valor += f.valor; o.coste += f.coste; o.n += 1;
+    }
+    return out;
   }
 
   /** Impuesto estimado si vendieras `acciones` ahora (FIFO). Aproximación: tipo único. */
@@ -331,9 +353,9 @@
   }
 
   const API = {
-    TOPE_POSICION, MESES_REVISION, TESIS_ANTIGUA_DIAS,
+    TOPE_POSICION, MESES_REVISION, TESIS_ANTIGUA_DIAS, PAQUETES,
     ms, iso, hoyISO, sumarDias, mesesEntre,
-    normalizarOperacion, calcular, valorar, revisar, impuestoSiVende,
+    normalizarOperacion, calcular, valorar, revisar, resumenPorPaquete, impuestoSiVende,
     avisosDosMeses, avisosVentaConPerdida, repartir, xirr, precioSpy, marcador,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = API;
