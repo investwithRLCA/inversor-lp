@@ -20,6 +20,7 @@ Dependencias: requests
 from __future__ import annotations
 
 import os
+import threading
 import time
 import logging
 from dataclasses import dataclass, field, asdict
@@ -34,6 +35,37 @@ SEC_UA = os.getenv("SEC_USER_AGENT", "InversorLP/1.0 (contacto@ejemplo.com)")
 FINNHUB_KEY = os.getenv("FINNHUB_API_KEY", "")
 
 M = 1_000_000.0  # los importes se normalizan a millones
+
+# --------------------------------------------------------------------------- #
+# Caché de proceso para el listado de tickers de la SEC
+#
+# BUG encontrado al revisar la velocidad del barrido: `build_fundamentals()`
+# crea un `SecEdgarProvider()` NUEVO en cada llamada (una por ticker), y
+# `self._ticker_map` es un atributo DE INSTANCIA — así que ese listado
+# (company_tickers.json, varios MB, ~10.000 empresas) se volvía a descargar
+# de la SEC en cada ticker. Un barrido de 100 tickers descargaba ese
+# fichero gigante 100 veces en vez de 1. Es, con mucho, la causa principal
+# de que el barrido fuera lento. Se soluciona con una caché a
+# nivel de módulo (compartida por todas las instancias del proceso, y
+# protegida con un lock porque run_universo.py ahora cribará en paralelo).
+# --------------------------------------------------------------------------- #
+_TICKER_MAP_CACHE: dict[str, dict] | None = None
+_TICKER_MAP_CACHE_AT: float = 0.0
+_TICKER_MAP_LOCK = threading.Lock()
+TICKER_MAP_TTL_SEG = 6 * 3600  # 6h: la lista de la SEC no cambia minuto a minuto
+
+# --------------------------------------------------------------------------- #
+# Throttle global para Finnhub (60 peticiones/min en el plan gratuito)
+#
+# Antes no hacía falta: todo era secuencial. Ahora que run_universo.py puede
+# cribar varios tickers en paralelo, varios hilos podrían llamar a Finnhub
+# casi a la vez y superar el límite por minuto. Un lock + hueco mínimo entre
+# llamadas (compartido por todos los hilos) lo evita sin tener que coordinar
+# nada desde fuera de este fichero.
+# --------------------------------------------------------------------------- #
+_FINNHUB_LOCK = threading.Lock()
+_FINNHUB_LAST_CALL: float = 0.0
+FINNHUB_MIN_GAP_SEG = 1.1  # ~54 peticiones/min como máximo, con margen bajo las 60
 
 
 # --------------------------------------------------------------------------- #
@@ -167,9 +199,14 @@ class SecEdgarProvider:
     BASE = "https://data.sec.gov"
     TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
-    def __init__(self, years: int = 5, throttle: float = 0.12):
+    def __init__(self, years: int = 5, throttle: float = 0.35):
         self.years = years
-        self.throttle = throttle          # SEC pide <10 req/s
+        # SEC pide <10 req/s en total. 0.12 bastaba cuando todo era
+        # secuencial (~8,3 req/s); ahora que run_universo.py criba en
+        # paralelo (ver PARALELISMO_CRIBADO = 3), cada hilo tiene que
+        # guardar un hueco mayor para que la SUMA de los 3 siga por
+        # debajo de 10 req/s (3 × 1/0.35 ≈ 8,6 req/s).
+        self.throttle = throttle
         self._ticker_map: dict[str, dict] | None = None
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": SEC_UA, "Accept-Encoding": "gzip, deflate"})
@@ -183,12 +220,23 @@ class SecEdgarProvider:
         return r.json()
 
     def _load_ticker_map(self) -> dict[str, dict]:
-        if self._ticker_map is None:
-            raw = self._get(self.TICKERS_URL)
-            self._ticker_map = {
-                v["ticker"].upper(): {"cik": f'{v["cik_str"]:010d}', "name": v["title"]}
-                for v in raw.values()
-            }
+        global _TICKER_MAP_CACHE, _TICKER_MAP_CACHE_AT
+        if self._ticker_map is not None:
+            return self._ticker_map
+
+        with _TICKER_MAP_LOCK:
+            vencida = (time.monotonic() - _TICKER_MAP_CACHE_AT) > TICKER_MAP_TTL_SEG
+            if _TICKER_MAP_CACHE is None or vencida:
+                raw = self._get(self.TICKERS_URL)
+                _TICKER_MAP_CACHE = {
+                    v["ticker"].upper(): {"cik": f'{v["cik_str"]:010d}', "name": v["title"]}
+                    for v in raw.values()
+                }
+                _TICKER_MAP_CACHE_AT = time.monotonic()
+                log.info("Listado de tickers EDGAR descargado de nuevo (%d tickers)",
+                          len(_TICKER_MAP_CACHE))
+
+        self._ticker_map = _TICKER_MAP_CACHE
         return self._ticker_map
 
     def resolve_cik(self, ticker: str) -> tuple[str, str]:
@@ -363,8 +411,14 @@ class FinnhubProvider:
         self._session = requests.Session()
 
     def _get(self, path: str, **params) -> dict:
+        global _FINNHUB_LAST_CALL
         params["token"] = self.key
-        r = self._session.get(f"{self.BASE}/{path}", params=params, timeout=20)
+        with _FINNHUB_LOCK:
+            espera = FINNHUB_MIN_GAP_SEG - (time.monotonic() - _FINNHUB_LAST_CALL)
+            if espera > 0:
+                time.sleep(espera)
+            r = self._session.get(f"{self.BASE}/{path}", params=params, timeout=20)
+            _FINNHUB_LAST_CALL = time.monotonic()
         r.raise_for_status()
         return r.json()
 
