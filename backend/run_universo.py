@@ -4,16 +4,27 @@ progreso en Supabase — así una ejecución de GitHub Actions puede parar y la
 siguiente continúa exactamente donde lo dejó la anterior, sin repetir
 trabajo ni tener que caber todo el universo en una sola ejecución.
 
+Este es el barrido de DESCUBRIMIENTO: recorre las ~10.000 empresas del
+universo EDGAR por turnos, una vez cada una antes de repetir ninguna. Para
+mantener al día las que YA tienen un análisis guardado (sobre todo las que
+más te interesan: COMPRA_FUERTE, COMPRA, VIGILAR) hay una cola aparte,
+mucho más corta y frecuente — ver `refrescar.py`. Las dos son
+independientes: esta no "sabe" de aquella, y viceversa.
+
 Dos fases en cada lote:
-  1. CRIBADO (gratis): para todos los tickers del lote — descarga datos,
-     filtra, guarda en Supabase. No llama a la IA.
-  2. IA (limitada): de los que pasaron el cribado y no tienen ya un análisis
-     en caché, solo se manda a la IA un número reducido (--max-ia), con
-     pausa entre llamadas para no saturar el nivel gratuito de Gemini.
+  1. CRIBADO (gratis, EN PARALELO): para todos los tickers del lote —
+     descarga datos, filtra, guarda en Supabase. No llama a la IA. Se hace
+     con varios hilos a la vez (PARALELISMO_CRIBADO) porque el cuello de
+     botella real es la red (EDGAR + Finnhub), no la CPU.
+  2. IA (limitada, secuencial): de los que pasaron el cribado y no tienen
+     ya un análisis en caché, solo se manda a la IA un número reducido
+     (--max-ia), con pausa entre llamadas para no saturar el nivel
+     gratuito de Gemini. Esta fase sí es secuencial a propósito: el límite
+     de Gemini es por proyecto de Google Cloud, no por lote de trabajo.
 
     python run_universo.py --sembrar              # una sola vez: carga el universo completo
-    python run_universo.py                        # procesa el siguiente lote (por defecto 60, hasta 15 con IA)
-    python run_universo.py --lote 100 --max-ia 25
+    python run_universo.py                        # procesa el siguiente lote (por defecto 100, hasta 20 con IA)
+    python run_universo.py --lote 150 --max-ia 30
     python run_universo.py --solo-cribado          # ningún ticker de este lote llega a la IA
 """
 
@@ -24,9 +35,10 @@ import logging
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from pipeline import Repo, analyze
+from pipeline import Outcome, Repo, analyze
 from universe import universo_completo
 from llm_gemini import GEMINI_KEYS
 
@@ -36,7 +48,20 @@ log = logging.getLogger(__name__)
 # reparten entre proyectos distintos (ver llm_gemini.py), así que cada
 # clave individual recibe muchas menos peticiones por minuto — se puede
 # acortar la pausa sin acercarse más a ningún límite por clave.
+#
+# OJO: esto solo multiplica el cupo real si cada clave viene de un
+# proyecto de Google Cloud DISTINTO. Varias claves del MISMO proyecto
+# comparten el mismo límite y no aceleran nada — ver el aviso en
+# llm_gemini.py.
 PAUSA_ENTRE_IA_SEG = 5 if len(GEMINI_KEYS) <= 1 else 3
+
+# Cuántos tickers se criban EN PARALELO. El cribado es ~100% espera de red
+# (EDGAR + Finnhub), así que varios hilos a la vez aceleran mucho sin más
+# coste — providers.py ya reparte el límite de peticiones/segundo de la SEC
+# entre estos hilos (ver el throttle de SecEdgarProvider) y serializa
+# Finnhub con un hueco mínimo global, así que subir este número no dispara
+# ningún límite por sí solo. 3 es un punto razonable; no hace falta tocarlo.
+PARALELISMO_CRIBADO = int(os.getenv("CRIBADO_WORKERS", "3"))
 
 
 def sembrar(repo: Repo) -> int:
@@ -82,12 +107,19 @@ def marcar_progreso(
     }).eq("ticker", ticker).execute()
 
 
+def _cribar(ticker: str, repo: Repo) -> tuple[str, Outcome]:
+    """Fase 1 de un ticker: datos + cribado cuantitativo, sin IA. Pensada
+    para lanzarse en un hilo — no hace ninguna llamada a Gemini, así que
+    varios hilos a la vez no compiten por el mismo cupo."""
+    return ticker, analyze(ticker, repo, con_ia=False)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Barrido del universo completo, por lotes.")
     ap.add_argument("--sembrar", action="store_true",
                      help="carga el universo completo en universe_progreso (una vez)")
-    ap.add_argument("--lote", type=int, default=60, help="tickers a procesar en esta ejecución")
-    ap.add_argument("--max-ia", type=int, default=15,
+    ap.add_argument("--lote", type=int, default=100, help="tickers a procesar en esta ejecución")
+    ap.add_argument("--max-ia", type=int, default=20,
                      help="cuántos, como máximo, llegan a la IA en esta ejecución")
     ap.add_argument("--solo-cribado", action="store_true", help="ningún ticker llega a la IA")
     args = ap.parse_args()
@@ -108,42 +140,61 @@ def main() -> None:
         print("universe_progreso está vacío. Ejecuta primero: python run_universo.py --sembrar")
         return
 
-    print(f"Procesando {len(lote)} tickers de este lote...")
-    ia_usadas = 0
-    resultados = {"cribado_ok": 0, "cribado_fuera": 0, "pasan_a_ia": 0, "analizados_ia": 0, "error": 0}
+    veces_previas = {f["ticker"]: (f.get("veces_intentado") or 0) for f in lote}
 
-    for fila in lote:
-        ticker = fila["ticker"]
-        veces_previas = fila.get("veces_intentado") or 0
-        con_ia = (not args.solo_cribado) and ia_usadas < args.max_ia
-        try:
-            o = analyze(ticker, repo, con_ia=con_ia)
-            ok = o.stage != "error"
-
+    # --- Fase 1: cribado en paralelo (gratis) -------------------------- #
+    print(f"Fase 1/2 — cribando {len(lote)} tickers "
+          f"({PARALELISMO_CRIBADO} en paralelo)...")
+    outcomes: dict[str, Outcome] = {}
+    with ThreadPoolExecutor(max_workers=PARALELISMO_CRIBADO) as pool:
+        futuros = {pool.submit(_cribar, f["ticker"], repo): f["ticker"] for f in lote}
+        for fut in as_completed(futuros):
+            ticker = futuros[fut]
+            try:
+                _, o = fut.result()
+            except Exception as e:  # noqa: BLE001
+                log.exception("Fallo inesperado criando %s", ticker)
+                o = Outcome(ticker, "error", detail=str(e))
+            outcomes[ticker] = o
             if o.stage == "error":
-                resultados["error"] += 1
                 print(f"  {ticker:8} ERROR: {o.detail}")
             elif o.stage == "rechazo_quant":
-                resultados["cribado_fuera"] += 1
                 print(f"  {ticker:8} descarta (score {o.quant_score})")
-            elif o.stage == "pendiente_ia":
-                resultados["cribado_ok"] += 1
-                resultados["pasan_a_ia"] += 1
-                print(f"  {ticker:8} PASA cribado (score {o.quant_score}) — a la espera de IA")
-            elif o.stage in ("analizado", "cache"):
-                resultados["cribado_ok"] += 1
-                resultados["analizados_ia"] += 1
-                if o.stage == "analizado":
-                    ia_usadas += 1
-                    time.sleep(PAUSA_ENTRE_IA_SEG)
-                print(f"  {ticker:8} {o.stage:10} {o.verdict}")
+            elif o.stage == "cache":
+                print(f"  {ticker:8} cache       {o.verdict}")
+            # "pendiente_ia" se anuncia en la fase 2.
 
-            marcar_progreso(repo, ticker, veces_previas, ok, o.detail)
+    # --- Fase 2: IA, secuencial, para quien pasó el cribado ------------ #
+    pendientes = [t for t, o in outcomes.items() if o.stage == "pendiente_ia"]
+    a_analizar = [] if args.solo_cribado else pendientes[: args.max_ia]
+    print(f"\nFase 2/2 — {len(a_analizar)} pasan a la IA "
+          f"(de {len(pendientes)} candidata(s) que superaron el cribado)...")
 
-        except Exception as e:  # noqa: BLE001
+    ia_usadas = 0
+    for ticker in a_analizar:
+        o = analyze(ticker, repo, con_ia=True)
+        outcomes[ticker] = o
+        if o.stage == "analizado":
+            ia_usadas += 1
+            time.sleep(PAUSA_ENTRE_IA_SEG)
+        print(f"  {ticker:8} {o.stage:10} {o.verdict}")
+
+    # --- Progreso + resumen --------------------------------------------- #
+    resultados = {"cribado_ok": 0, "cribado_fuera": 0, "pasan_a_ia": 0, "analizados_ia": 0, "error": 0}
+    for ticker, o in outcomes.items():
+        ok = o.stage != "error"
+        marcar_progreso(repo, ticker, veces_previas.get(ticker, 0), ok, o.detail)
+
+        if o.stage == "error":
             resultados["error"] += 1
-            log.exception("Fallo inesperado con %s", ticker)
-            marcar_progreso(repo, ticker, veces_previas, False, str(e))
+        elif o.stage == "rechazo_quant":
+            resultados["cribado_fuera"] += 1
+        elif o.stage == "pendiente_ia":
+            resultados["cribado_ok"] += 1
+            resultados["pasan_a_ia"] += 1
+        elif o.stage in ("analizado", "cache"):
+            resultados["cribado_ok"] += 1
+            resultados["analizados_ia"] += 1
 
     print(f"\nResumen del lote: {resultados}")
     print(f"Llamadas a la IA en esta ejecución: {ia_usadas}/{args.max_ia}")
