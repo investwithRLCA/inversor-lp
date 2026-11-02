@@ -467,6 +467,11 @@ def _pc(x, dec: int = 0) -> str:
     return "—" if x is None else f"{x * 100:+.{dec}f} %"
 
 
+def _pp(x, dec: int = 1) -> str:
+    """Diferencia entre dos rentabilidades, en puntos porcentuales."""
+    return "—" if x is None else f"{x * 100:+.{dec}f} pp"
+
+
 def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
     L: list[str] = []
     A = L.append
@@ -520,7 +525,7 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
         if not P["candidatas"]:
             A(f"Ninguna empresa cumple hoy los criterios de este paquete ({P['n_aptas']} aptas).\n")
             continue
-        A("| Empresa | Precio | Puntos | ROIC | Ingresos/año | Caja libre | Precio vs su rango | Nivel |")
+        A("| Empresa | Precio | Puntos | ROIC | Ingresos/año | Caja libre | Precio vs su mediana 5a | Nivel |")
         A("|---|---:|---:|---:|---:|---:|---:|---|")
         for c in P["candidatas"]:
             k = c.get("clave") or {}
@@ -531,10 +536,13 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
               f"{_pc(-c['descuento']) if c.get('descuento') is not None else '—'} | {nivel} |")
         A("")
         extra = [f"- ⚠️ **{c['ticker']}**: {av}" for c in P["candidatas"] for av in c.get("avisos", [])
-                 if "solo ha pasado el cribado" not in av]
+                 if "solo ha pasado el cribado" not in av and "parte alta de su rango" not in av]
         if extra:
             L.extend(extra)
             A("")
+        if any("parte alta de su rango" in av for c in P["candidatas"] for av in c.get("avisos", [])):
+            A("_Varias cotizan en la parte alta de su rango de 5 años (normal en negocios que crecen "
+              "mucho): si compras, mejor escalonado en varios meses._\n")
     if cands or any((paq.get(k) or {}).get("candidatas") for k in ("medio", "largo")):
         A("**Reparto orientativo:** a partes iguales dentro de cada paquete, con tope por empresa. "
           "Cuánto compras de cada una depende de tu importe y de lo que ya tengas: "
@@ -555,9 +563,9 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
                 mad = True
                 sup = f"{s['superan_spy']}/{s['cohortes_maduras']}"
                 A(f"- **{pq.INFO[clave]['etiqueta']}**: {s['cohortes_maduras']} cohorte(s) con ≥3 meses; "
-                  f"exceso medio sobre el S&P 500 {_pc(s['exceso_medio'], 1)} "
+                  f"exceso medio sobre el S&P 500 {_pp(s['exceso_medio'])} "
                   f"(superó al índice en {sup})"
-                  + (f"; sobre el resto del universo {_pc(s['exceso_medio_pool'], 1)}" if s.get("exceso_medio_pool") is not None else "")
+                  + (f"; sobre el resto del universo {_pp(s['exceso_medio_pool'])}" if s.get("exceso_medio_pool") is not None else "")
                   + ".")
         if not mad:
             A("- Aún no hay ninguna cohorte con 3 meses de vida.")

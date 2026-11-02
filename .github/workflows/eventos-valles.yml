@@ -1,0 +1,66 @@
+name: Estudio de valles (S&P 500 y Nasdaq-100)
+
+# Pregunta: cuando una acción del S&P 500 o del Nasdaq-100 cae a un valle,
+# ¿sigue bajando o acaba subiendo? ¿Y rinde de media más que el índice?
+#
+# Mide, con precios reales de Yahoo (ajustados por dividendos y splits), qué pasó
+# a 3, 6, 12, 24 y 36 meses tras cada caída, con tres definiciones de «valle» y
+# comparando contra el índice, contra el resto del universo en las mismas fechas,
+# separando los pánicos de mercado y avisando del sesgo de supervivencia.
+#
+# Lanzarlo a mano: pestaña "Actions" → "Estudio de valles" → "Run workflow".
+# El resultado aparece en la página de la ejecución (resumen) y en el log.
+# Solo usa datos públicos de empresas: nada de tu cartera.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sin_nasdaq:
+        description: "Estudiar solo el S&P 500"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  estudiar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-backtest.txt lxml html5lib
+
+      - name: Estudiar los valles
+        working-directory: backend
+        env:
+          SIN_NASDAQ: ${{ github.event.inputs.sin_nasdaq || 'false' }}
+        run: |
+          EXTRA=""
+          if [ "$SIN_NASDAQ" = "true" ]; then EXTRA="--sin-nasdaq"; fi
+          python -W ignore -m mensual.eventos $EXTRA --salida resultados_eventos
+
+      - name: Mostrar el informe en la página de la ejecución
+        if: always()
+        run: |
+          if [ -f backend/resultados_eventos/informe.md ]; then
+            cat backend/resultados_eventos/informe.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No se generó informe (mira el log del paso anterior)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guardar resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eventos-valles
+          path: backend/resultados_eventos/
+          if-no-files-found: ignore
