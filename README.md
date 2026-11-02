@@ -41,6 +41,12 @@ error 429, espera un minuto o analiza menos empresas de golpe.
 | `backend/llm_gemini.py` | Único punto que llama a la IA (Gemini, nivel gratuito). |
 | `backend/pipeline.py` | Orquestador con caché, llamada al LLM y parseo del informe. |
 | `backend/probar_ia.py` | Prueba el embudo completo **sin base de datos**. Empieza por aquí. |
+| `backend/universe.py` | Capa 0. Listado completo de tickers EDGAR (~10.000, no solo S&P 500). |
+| `backend/run_universo.py` | **Barrido de descubrimiento.** Recorre el universo por lotes, cribado en paralelo. |
+| `backend/refrescar.py` | **Refresco de cartera.** Re-verifica lo ya analizado, por prioridad. Ver sección de abajo. |
+| `backend/vigilar.py` | Vigilancia diaria de precio (sin IA) de las empresas marcadas VIGILAR. |
+| `.github/workflows/` | Los tres workflows que lo hacen correr solo: `barrido.yml`, `refresco.yml`, `vigilancia.yml`. |
+| `docs/index.html` | Dashboard móvil ("Vigía"), servido por GitHub Pages, lee Supabase con la clave `anon`. |
 | `QUICKSTART.md` | Guía paso a paso para ponerlo en marcha en tu ordenador. |
 | `db/schema.sql` | Esquema Supabase con RLS, vistas y dedupe por `data_hash`. |
 
@@ -59,6 +65,46 @@ python backend/quant_filter.py MSFT KO F     # solo cribado, sin IA ni base de d
 python backend/pipeline.py MSFT              # embudo completo
 python backend/macro_layer.py                # demo de la regla de combinación
 ```
+
+## Automatización 24/7 (GitHub Actions)
+
+Una vez desplegado, tres workflows independientes lo mantienen vivo sin que tengas que
+tocar nada:
+
+| Workflow | Qué hace | Cuándo |
+|---|---|---|
+| `barrido.yml` | **Descubrimiento.** Recorre el universo EDGAR (~10.000 tickers) buscando candidatas nuevas, una vez cada una antes de repetir ninguna. | cada 4 horas |
+| `refresco.yml` | **Mantenimiento.** Vuelve a pasar por el embudo a las empresas que YA tienen un análisis guardado, empezando por COMPRA_FUERTE/COMPRA/VIGILAR y por las más antiguas. Casi siempre gratis (caché). | a diario |
+| `vigilancia.yml` | Comprueba el precio de las VIGILAR y abre un Issue si alguna cruza su precio de entrada. | cada 2 horas |
+
+**Por qué dos barridos distintos (`barrido.yml` y `refresco.yml`) en vez de uno solo.**
+El descubrimiento recorre ~10.000 tickers por turnos: a una empresa ya analizada podría
+no tocarle de nuevo hasta dentro de semanas, según cuántas haya por delante en la cola.
+Eso vale para encontrar candidatas nuevas, pero no para mantener al día lo que ya te
+interesa. `refresco.yml` es una cola aparte, mucho más corta (solo lo ya analizado) y
+mucho más frecuente — así una tesis en cartera no se queda nunca "congelada" durante
+semanas, y si una empresa deja de pasar el cribado cuantitativo (se ha endeudado, el
+margen se ha deteriorado...) te enteras en menos de un día, no cuando le vuelva a tocar
+turno en el barrido grande.
+
+**Cómo comprobar que el aviso de `vigilancia.yml` te llega de verdad.** Pestaña
+*Actions* → *Vigilancia de precio* → *Run workflow* → marca `prueba` → *Run workflow*.
+Se abre un Issue de prueba al momento (sin tocar Supabase ni Finnhub), asignado a ti y
+con la etiqueta `alerta-compra`. Si te llega el aviso (correo, notificación en el móvil
+con la app de GitHub...), el mecanismo funciona. Si no te llega nada, revisa tu
+configuración de notificaciones en https://github.com/settings/notifications — en
+particular que "Issues" tenga marcado algún canal (correo y/o web/móvil) para
+"Participating, @mentions" como mínimo (el Issue te menciona y te asigna, así que con
+eso ya basta).
+
+**Las claves de Gemini, de proyectos de Google Cloud DISTINTOS, no solo claves
+distintas.** El límite del nivel gratuito es por *proyecto*, no por clave: si tus 3
+claves salieron del mismo proyecto en Google AI Studio, en la práctica sigues teniendo
+el cupo de una sola, y `GEMINI_API_KEYS` no te da ninguna velocidad extra — solo un
+respaldo si una clave se queda sin cupo momentáneamente. Para que de verdad se reparta
+el trabajo entre las tres, cada una tiene que venir de un proyecto distinto (en
+https://aistudio.google.com/apikey, cambia de proyecto arriba antes de crear cada
+clave nueva).
 
 ## Seis decisiones de diseño que conviene entender
 
@@ -100,6 +146,11 @@ obsoletos sin tener que borrar la base de datos.
   fuente; el resto de la arquitectura no cambia.
 - Las etiquetas XBRL varían entre empresas. `CONCEPTS` prueba varias por concepto, pero
   para casos raros tendrás que añadir la etiqueta a la lista.
+- (Corregido) `SecEdgarProvider` creaba una instancia nueva por ticker y volvía a
+  descargar el listado completo de EDGAR (varios MB) en cada una — un barrido de 100
+  tickers lo descargaba 100 veces. Ahora hay una caché a nivel de proceso compartida por
+  todas las instancias (ver `providers.py`), protegida con un lock porque el cribado
+  ahora corre en paralelo.
 
 ## Nota
 
