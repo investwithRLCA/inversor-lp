@@ -106,6 +106,52 @@ el trabajo entre las tres, cada una tiene que venir de un proyecto distinto (en
 https://aistudio.google.com/apikey, cambia de proyecto arriba antes de crear cada
 clave nueva).
 
+## Módulo mensual de oportunidades (en fase de prueba)
+
+Complemento del bot de largo plazo, pensado para ir **mes a mes**: tú decides cuánto dinero
+metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones** y **cuándo vender**.
+Busca empresas que están baratas **frente a sí mismas** (su propio rango de los últimos ~5
+años: «siempre ha estado entre 80 y 120 y ahora está en 60»), descarta las que se hunden por
+un problema de fondo, y vende solo cuando están claramente caras. Todo con recursos gratuitos.
+Es un modelo **solo de acciones**: no hay ETF de relleno; si un mes nada está barato, el
+dinero espera.
+
+**Estado: está construido el backtest.** Antes de construir el resto (recomendador mensual,
+tablas, pestaña en el Vigía, avisos) hay que comprobar con datos históricos que la idea no es
+peor que aportar cada mes al S&P 500. Se hace así, y no al revés, porque un backtest solo
+puede decir «no»: si ni con datos que favorecen a la estrategia consigue ventaja, no compensa
+seguir.
+
+| Fichero | Qué es |
+|---|---|
+| `backend/mensual/estrategia.py` | Las reglas (señales, candidatas, reparto, venta) como funciones puras. Las usará también el recomendador real. |
+| `backend/mensual/backtest.py` | Motor del backtest, controles, veredicto e informe. |
+| `backend/mensual/precios.py` | Descarga de precios (Yahoo Finance, gratis) y universo S&P 500 con su sector. |
+| `.github/workflows/backtest-mensual.yml` | Lo lanza a mano en GitHub Actions. |
+
+**Cómo lanzarlo:** pestaña *Actions* → *Backtest mensual (manual)* → *Run workflow*. Tarda
+unos minutos. El informe sale en la página de la ejecución (apartado *Summary*) y hay un zip
+descargable (apartado *Artifacts*) con el gráfico y las operaciones mes a mes.
+
+**Por qué compara con tres referencias y no con una.** (A) aportar solo al S&P 500: la
+alternativa real. (B) aportar a partes iguales a *todas* las empresas del universo: si la
+estrategia no la supera, su ventaja es solo que el universo está hecho de las ganadoras de
+hoy (sesgo de supervivencia). (C) la misma estrategia eligiendo las empresas *al azar*: si
+no queda claramente por encima, la señal no aporta nada. Además hay un diagnóstico (no entra
+en el veredicto) que separa «¿elige bien las acciones?» de «¿cuánto cuesta esperar en
+efectivo?».
+
+**Veredicto con criterios fijados de antemano**, sobre una variante elegida antes de ver
+resultados (venta solo cuando esté claramente cara, esperando a que deje de caer): ≥ 1,5
+puntos/año sobre el S&P 500 tras impuestos, ≥ 0,5 sobre el control de supervivencia, por
+encima del 90 % de las carteras al azar, y sin caer más de 5 puntos peor en su peor racha.
+Las otras 7 variantes salen como sensibilidad, no para elegir la mejor.
+
+**Fuente de precios.** Yahoo Finance vía `yfinance`: gratis y con ~20 años de histórico, pero
+no es oficial y a veces bloquea las IPs de GitHub Actions. Si pasa, el informe no se genera y
+el log lo dice claramente (no sigue con datos a medias). Alternativas: Stooq (desde marzo de
+2026 exige una clave gratuita) o Alpaca (histórico gratuito solo desde 2016, corto).
+
 ## Seis decisiones de diseño que conviene entender
 
 **1. El `data_hash` excluye el precio.** Una tesis a 10 años no cambia porque la acción

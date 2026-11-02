@@ -1,0 +1,88 @@
+name: Backtest mensual (manual)
+
+# Prueba, con datos históricos, la estrategia del módulo mensual ("comprar el
+# bajón de una empresa frente a su propio rango y vender cuando esté cara")
+# contra aportar lo mismo cada mes a un ETF del S&P 500.
+#
+# Solo se lanza a mano: pestaña Actions → "Backtest mensual (manual)" →
+# Run workflow. No usa ninguna clave ni toca Supabase. Tarda unos minutos
+# (casi todo es la descarga de precios de ~500 empresas de Yahoo Finance).
+#
+# Resultado: el informe aparece en la propia página de la ejecución
+# (apartado "Summary") y, además, se guarda un zip descargable con el informe,
+# el gráfico y las operaciones mes a mes (apartado "Artifacts", abajo del todo).
+
+on:
+  workflow_dispatch:
+    inputs:
+      inicio:
+        description: "Primer mes simulado (AAAA-MM-DD)"
+        required: false
+        default: "2012-01-01"
+      aportacion:
+        description: "Aportación mensual en dólares"
+        required: false
+        default: "1000"
+      montecarlo:
+        description: "Carteras al azar para el control (0 = sin control; 100 es suficiente)"
+        required: false
+        default: "100"
+      impuesto:
+        description: "Tipo sobre ganancias (0.21 = 21 %)"
+        required: false
+        default: "0.21"
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r backend/requirements-backtest.txt
+
+      # Guarda los precios descargados para no volver a pedirlos a Yahoo si
+      # repites la prueba en los próximos días con otros parámetros.
+      - name: Caché de precios
+        uses: actions/cache@v4
+        with:
+          path: backend/.cache_precios
+          key: precios-${{ github.run_id }}
+          restore-keys: precios-
+
+      - name: Ejecutar backtest
+        working-directory: backend
+        env:
+          INICIO: ${{ github.event.inputs.inicio || '2012-01-01' }}
+          APORTACION: ${{ github.event.inputs.aportacion || '1000' }}
+          MONTECARLO: ${{ github.event.inputs.montecarlo || '100' }}
+          IMPUESTO: ${{ github.event.inputs.impuesto || '0.21' }}
+        run: >
+          python -m mensual.backtest
+          --inicio "$INICIO"
+          --aportacion "$APORTACION"
+          --montecarlo "$MONTECARLO"
+          --impuesto "$IMPUESTO"
+          --salida resultados
+
+      - name: Mostrar el informe en la página de la ejecución
+        if: always()
+        run: |
+          if [ -f backend/resultados/informe.md ]; then
+            cat backend/resultados/informe.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No se generó informe (mira el log del paso anterior)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guardar resultados descargables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-mensual
+          path: backend/resultados/
+          if-no-files-found: ignore
