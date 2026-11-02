@@ -25,6 +25,11 @@ on:
         type: boolean
         required: false
         default: false
+      depurar:
+        description: "Solo comprobación: tickers separados por comas (p. ej. WKC,RHI). Muestra sus pagos de dividendo reales y no hace el análisis"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -64,7 +69,12 @@ jobs:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           MAX_EMPRESAS: ${{ github.event.inputs.max_empresas || '0' }}
           SIN_SEC: ${{ github.event.inputs.sin_sec || 'false' }}
+          DEPURAR: ${{ github.event.inputs.depurar || '' }}
         run: |
+          if [ -n "$DEPURAR" ]; then
+            python -W ignore -m mensual.dividendos --depurar "$DEPURAR" 2>&1 | grep -v -E "Pandas4Warning|^See https|inplace"
+            exit 0
+          fi
           N="${MAX_EMPRESAS//[^0-9]/}"
           EXTRA="--max-empresas ${N:-0}"
           if [ "$SIN_SEC" = "true" ]; then EXTRA="$EXTRA --sin-sec"; fi

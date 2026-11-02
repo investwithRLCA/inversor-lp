@@ -434,8 +434,21 @@ def puntuar(an: dict, emp: dict | None, rend: dict, caida: float | None, reglas:
 # 5. Puertas de dividendo y construcción de la sección
 # --------------------------------------------------------------------------- #
 
+_CATEGORIAS = (
+    (r"^solo [\d.]+ años pagando", "lleva poco tiempo pagando"),
+    (r"^ha recortado el dividendo", "ha recortado el dividendo"),
+    (r"^caja libre positiva solo", "pocos años con caja libre positiva"),
+    (r"^deuda neta/EBITDA", "deuda neta/EBITDA demasiado alta"),
+    (r"^cae un ", "cae mucho desde su máximo anual"),
+    (r"^rentabilidad por dividendo sospechosa", "dividendo sospechosamente alto"),
+)
+
+
 def categoria(motivo: str) -> str:
-    """Motivo de descarte sin cifras, para contarlos: «deuda neta/EBITDA 4.2x» → «deuda neta/EBITDA»."""
+    """Motivo de descarte sin cifras, para contarlos: «deuda neta/EBITDA 4.2x» → «deuda neta/EBITDA demasiado alta»."""
+    for patron, nombre in _CATEGORIAS:
+        if re.match(patron, motivo):
+            return nombre
     return re.split(r"[\d(+\-]", motivo)[0].strip() or motivo
 
 
@@ -978,14 +991,39 @@ def informe_md(sec: dict) -> str:
     return "\n".join(L)
 
 
+def depurar(tickers: list[str]) -> None:
+    """Comprobación a mano: pagos de dividendo tal como llegan de Yahoo y lo que el módulo deduce."""
+    hoy = date.today()
+    datos = descargar_dividendos(tickers, f"{hoy.year - 15}-01-01", lote=10)
+    for t in tickers:
+        d = datos.get(t)
+        print(f"\n===== {t} =====")
+        if not d:
+            print("sin datos de Yahoo")
+            continue
+        div = d["div"]
+        reg, esp = limpiar_pagos(div)
+        print(f"último cierre: {d['close'].iloc[-1]:.2f} ({d['close'].index[-1].date()}) · pagos totales: {len(div)} · regulares: {len(reg)} · especiales: {esp}")
+        print("últimos 24 pagos (fecha, importe, ¿regular?):")
+        reg_set = set(reg.index)
+        for f_, v in div.tail(24).items():
+            print(f"  {f_.date()}  {v:.4f}  {'regular' if f_ in reg_set else 'ESPECIAL/descartado'}")
+        an = analizar_dividendo(div, float(d["close"].iloc[-1]), hoy)
+        print({k: (round(v, 3) if isinstance(v, float) else v) for k, v in an.items()})
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Small caps con dividendo que no se recorta.")
     ap.add_argument("--salida", default="resultados_dividendos", help="carpeta de salida")
     ap.add_argument("--max-empresas", type=int, default=0, help="solo para pruebas")
     ap.add_argument("--sin-sec", action="store_true", help="no consultar la SEC (solo dividendos y precio)")
+    ap.add_argument("--depurar", default="", help="tickers separados por comas: imprime sus pagos reales y el análisis, y termina")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     from pathlib import Path
+    if args.depurar.strip():
+        depurar([t.strip().upper() for t in args.depurar.split(",") if t.strip()])
+        return
     sec = generar(max_empresas=args.max_empresas, con_sec=not args.sin_sec)
     Path(args.salida).mkdir(parents=True, exist_ok=True)
     md = informe_md(sec)
