@@ -106,51 +106,84 @@ el trabajo entre las tres, cada una tiene que venir de un proyecto distinto (en
 https://aistudio.google.com/apikey, cambia de proyecto arriba antes de crear cada
 clave nueva).
 
-## Módulo mensual de oportunidades (en fase de prueba)
+## Módulo mensual de oportunidades (experimental)
 
 Complemento del bot de largo plazo, pensado para ir **mes a mes**: tú decides cuánto dinero
-metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones** y **cuándo vender**.
-Busca empresas que están baratas **frente a sí mismas** (su propio rango de los últimos ~5
-años: «siempre ha estado entre 80 y 120 y ahora está en 60»), descarta las que se hunden por
-un problema de fondo, y vende solo cuando están claramente caras. Todo con recursos gratuitos.
-Es un modelo **solo de acciones**: no hay ETF de relleno; si un mes nada está barato, el
-dinero espera.
+metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones**. Parte de tu lista
+(COMPRA_FUERTE, COMPRA, VIGILAR: ya pasaron el cribado fundamental) y busca las que están
+baratas **frente a sí mismas** (su propio rango de los últimos ~5 años: «siempre ha estado
+entre 80 y 120 y ahora está en 60»), sin estar hundidas y habiendo dejado de caer. Es un modelo
+**solo de acciones**: sin ETF de relleno; si un mes nada está barato, el dinero espera.
 
-**Estado: está construido el backtest.** Antes de construir el resto (recomendador mensual,
-tablas, pestaña en el Vigía, avisos) hay que comprobar con datos históricos que la idea no es
-peor que aportar cada mes al S&P 500. Se hace así, y no al revés, porque un backtest solo
-puede decir «no»: si ni con datos que favorecen a la estrategia consigue ventaja, no compensa
-seguir.
+### Qué dijo la prueba histórica (y por qué el módulo es como es)
+
+Con 504 empresas del S&P 500 (2012-2026, impuestos y comisiones incluidos), las reglas tal como
+se diseñaron **NO pasaron** los criterios fijados antes de ver los resultados:
+
+| | Rentab. anual tras impuestos |
+|---|---:|
+| Comprar el bajón y **vender cuando está cara** | 11,3 % |
+| Aportar solo al S&P 500 | 12,7 % |
+| Aportar a partes iguales a todas las empresas del universo (control de supervivencia) | 15,4 % |
+| Misma estrategia eligiendo al azar (mediana) | 12,1 % |
+
+- **Las tres reglas de venta por precio pierden** frente al S&P 500. Por eso el módulo **no manda
+  vender por precio**: solo marca «muy cara» a título informativo. Se vende, si acaso, por tesis rota.
+- La única variante que ganaba de largo («no vender nunca», 27,5 %) depende de **una sola empresa
+  (AMD: 72 % de todas las ganancias)**. Sin ella baja a 16,0 %, prácticamente lo mismo que el control
+  de supervivencia (15,4 %). Es sesgo de supervivencia, no una ventaja demostrada.
+- Conclusión honesta: **no hay evidencia de que la regla de compra bata al índice.** El backtest solo
+  puede decir «no» (le faltan las empresas que quebraron y el filtro de calidad no se puede probar
+  sin datos de la época). Por eso el módulo trae un **marcador** que compara tu resultado real con
+  poner exactamente los mismos flujos de dinero en el S&P 500. Es el juez: dale 12-24 meses con
+  importes que puedas permitirte, y si no gana, abandónalo.
+
+### Cómo funciona cada mes
+
+1. `mensual.yml` (día 1 de cada mes, o a mano) ejecuta `python -m mensual.recomendador`.
+2. **Núcleo = lo que se probó:** señales de precio vs. su propio rango, máx. 4 candidatas y 2 por sector.
+3. **Frenos que solo pueden quitar o avisar, nunca añadir:** precio por encima del rango de valor de la
+   tesis; chequeo del último trimestre publicado en la SEC (ingresos y margen interanuales); y la IA
+   (Gemini) lee los titulares de Finnhub y dice si la caída parece temporal o estructural. Solo veta
+   «estructural con confianza alta»; si los titulares no explican la caída, dice «incierto».
+4. Guarda el informe en Supabase (`mensual_informes`) y abre un Issue con las candidatas.
+5. La pestaña **Mensual** del Vigía lee ese informe: escribes cuánto vas a invertir y reparte a partes
+   iguales con tope por empresa (lo que no cabe NO se fuerza: se guarda para el mes siguiente).
+
+### Privacidad: tu cartera nunca sale de tu móvil
+
+Este repositorio es público, así que el informe, el Issue y los logs contienen **solo datos de
+empresas**. Tus compras, importes y posiciones se guardan únicamente en el `localStorage` de tu
+navegador (pestaña Mensual → «Registrar operación»), con botones de exportar/importar copia. Allí
+mismo se calculan, sin enviar nada: el reparto de tu importe, el estado de cada posición (tesis
+rota, peso, revisión a los 24 meses), el impuesto estimado de vender (FIFO, aproximado), el aviso de
+la regla de los 2 meses y el marcador frente al S&P 500.
+
+### Ficheros
 
 | Fichero | Qué es |
 |---|---|
-| `backend/mensual/estrategia.py` | Las reglas (señales, candidatas, reparto, venta) como funciones puras. Las usará también el recomendador real. |
-| `backend/mensual/backtest.py` | Motor del backtest, controles, veredicto e informe. |
+| `backend/mensual/estrategia.py` | Las reglas (señales, candidatas, reparto, venta) como funciones puras; las usan el backtest y el recomendador. |
+| `backend/mensual/backtest.py` | Motor del backtest, controles (S&P 500, supervivencia, azar), veredicto, anexo de robustez. |
 | `backend/mensual/precios.py` | Descarga de precios (Yahoo Finance, gratis) y universo S&P 500 con su sector. |
-| `.github/workflows/backtest-mensual.yml` | Lo lanza a mano en GitHub Actions. |
+| `backend/mensual/recomendador.py` | El informe mensual (núcleo + frenos) y el Markdown del Issue. |
+| `backend/mensual/salud.py` | Chequeo del último trimestre (EDGAR, gratis). |
+| `backend/mensual/explicacion.py` | «¿Por qué ha caído?»: titulares + Gemini, con veto solo si «estructural + alta». |
+| `db/006_mensual.sql` | Tabla del informe y vista pública de solo lectura (aplicar en el SQL Editor de Supabase). |
+| `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Mensual. |
+| `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano. |
+| `.github/workflows/backtest-mensual.yml` | Repite la prueba histórica a mano (informe en *Summary*; zip en *Artifacts*). |
 
-**Cómo lanzarlo:** pestaña *Actions* → *Backtest mensual (manual)* → *Run workflow*. Tarda
-unos minutos. El informe sale en la página de la ejecución (apartado *Summary*) y hay un zip
-descargable (apartado *Artifacts*) con el gráfico y las operaciones mes a mes.
+**Para activarlo:** (1) pega `db/006_mensual.sql` en Supabase → SQL Editor → Run; (2) pestaña
+*Actions* → *Recomendador mensual* → *Run workflow*; (3) abre el Vigía → *Mensual*.
 
-**Por qué compara con tres referencias y no con una.** (A) aportar solo al S&P 500: la
-alternativa real. (B) aportar a partes iguales a *todas* las empresas del universo: si la
-estrategia no la supera, su ventaja es solo que el universo está hecho de las ganadoras de
-hoy (sesgo de supervivencia). (C) la misma estrategia eligiendo las empresas *al azar*: si
-no queda claramente por encima, la señal no aporta nada. Además hay un diagnóstico (no entra
-en el veredicto) que separa «¿elige bien las acciones?» de «¿cuánto cuesta esperar en
-efectivo?».
+**Fuente de precios.** Yahoo Finance vía `yfinance`: gratis y con ~20 años de histórico, pero no es
+oficial y a veces bloquea las IPs de GitHub Actions. Si pasa, no se genera informe y el log lo dice
+(no sigue con datos a medias). Funcionó bien en la prueba del 2-nov-2026.
 
-**Veredicto con criterios fijados de antemano**, sobre una variante elegida antes de ver
-resultados (venta solo cuando esté claramente cara, esperando a que deje de caer): ≥ 1,5
-puntos/año sobre el S&P 500 tras impuestos, ≥ 0,5 sobre el control de supervivencia, por
-encima del 90 % de las carteras al azar, y sin caer más de 5 puntos peor en su peor racha.
-Las otras 7 variantes salen como sensibilidad, no para elegir la mejor.
-
-**Fuente de precios.** Yahoo Finance vía `yfinance`: gratis y con ~20 años de histórico, pero
-no es oficial y a veces bloquea las IPs de GitHub Actions. Si pasa, el informe no se genera y
-el log lo dice claramente (no sigue con datos a medias). Alternativas: Stooq (desde marzo de
-2026 exige una clave gratuita) o Alpaca (histórico gratuito solo desde 2016, corto).
+**Límites que conviene recordar.** Precios y cifras en dólares (sin cambio a euros); impuesto con tipo
+único del 21 % (editable en la pestaña); la regla de los 2 meses solo avisa. Información automática,
+no asesoramiento financiero ni fiscal.
 
 ## Seis decisiones de diseño que conviene entender
 

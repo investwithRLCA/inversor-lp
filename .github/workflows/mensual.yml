@@ -1,0 +1,124 @@
+name: Recomendador mensual
+
+# Una vez al mes (día 1) — y cuando tú quieras a mano — mira la lista del bot de
+# largo plazo (COMPRA_FUERTE, COMPRA, VIGILAR), busca cuáles están baratas
+# frente a su propio rango de 5 años, las pasa por tres frenos (valor de la
+# tesis, último trimestre publicado, "por qué ha caído" con IA), guarda el
+# informe en Supabase para la pestaña «Mensual» del Vigía y abre un Issue de
+# aviso.
+#
+# Lanzarlo a mano: pestaña "Actions" → "Recomendador mensual" → "Run workflow".
+#
+# PRIVACIDAD: este repositorio es público, así que el Issue y el resumen de
+# esta ejecución contienen SOLO información de empresas. Tu cartera y tus
+# importes no pasan nunca por aquí: se calculan en tu móvil.
+
+on:
+  schedule:
+    - cron: "17 11 1 * *"       # día 1 de cada mes, 11:17 UTC
+  workflow_dispatch:
+    inputs:
+      con_ia:
+        description: "Usar la IA (Gemini) para explicar por qué han caído las candidatas"
+        type: boolean
+        required: false
+        default: true
+      crear_issue:
+        description: "Abrir el Issue de aviso (desmárcalo si solo quieres refrescar los datos del Vigía)"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  recomendar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-mensual.txt
+
+      - name: Generar el informe del mes
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CON_IA: ${{ github.event.inputs.con_ia || 'true' }}
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+          EXTRA=""
+          if [ "$CON_IA" != "true" ]; then EXTRA="--sin-ia"; fi
+          python -m mensual.recomendador $EXTRA \
+            --salida informe_mensual.json --md issue_mensual.md \
+            --url-dashboard "https://${OWNER}.github.io/${REPO}/"
+
+      - name: Mostrar el resumen en la página de la ejecución
+        if: always()
+        run: |
+          if [ -f backend/issue_mensual.md ]; then
+            cat backend/issue_mensual.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No se generó informe (mira el log del paso anterior)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Abrir el Issue de aviso
+        if: ${{ github.event.inputs.crear_issue != 'false' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const propietario = context.repo.owner;
+            const inf = JSON.parse(fs.readFileSync('backend/informe_mensual.json', 'utf8'));
+            const cuerpoMd = fs.readFileSync('backend/issue_mensual.md', 'utf8');
+
+            const ETIQUETA = 'mensual';
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner, repo: context.repo.repo, name: ETIQUETA,
+              });
+            } catch (e) {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner, repo: context.repo.repo, name: ETIQUETA,
+                color: '1d76db',
+                description: 'Aviso mensual: oportunidades baratas frente a su propio historial',
+              });
+            }
+
+            const n = inf.resumen.n_candidatas;
+            const titulo = n === 0
+              ? `📅 ${inf.mes}: nada claramente barato este mes`
+              : `📅 ${inf.mes}: ${n} candidata${n === 1 ? '' : 's'} — ${inf.candidatas.map(c => c.ticker).join(', ')}`;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: titulo,
+              body: `@${propietario}\n\n${cuerpoMd}`,
+              assignees: [propietario],
+              labels: [ETIQUETA],
+            });
+
+      - name: Guardar el informe como archivo descargable
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informe-mensual
+          path: |
+            backend/informe_mensual.json
+            backend/issue_mensual.md
+          if-no-files-found: ignore
