@@ -35,7 +35,10 @@ import pandas as pd
 MIN_DIAS_RESUMEN = 90        # una cohorte con menos días no entra en el resumen
 MIN_UNIVERSO = 30            # el control «resto del universo» exige al menos 30 empresas
 PAQUETES = ("corto", "medio", "largo")
+PAQ_DIV = "dividendos"       # sección de small caps con dividendo: se compara con el Russell 2000 (IWM)
+TODOS = PAQUETES + (PAQ_DIV,)
 BENCHMARK = "SPY"
+BENCH_DIV = "IWM"
 
 
 def yahoo(ticker: str) -> str:
@@ -58,9 +61,19 @@ def _picks(inf: dict) -> dict[str, list[dict]]:
     (solo `candidatas`, que era el paquete corto)."""
     paq = inf.get("paquetes")
     if isinstance(paq, dict) and paq:
-        return {k: [{"ticker": c["ticker"], "tier": c.get("tier")} for c in (v.get("candidatas") or [])]
-                for k, v in paq.items() if k in PAQUETES}
-    return {"corto": [{"ticker": c["ticker"], "tier": c.get("tier")} for c in (inf.get("candidatas") or [])]}
+        out = {k: [{"ticker": c["ticker"], "tier": c.get("tier")} for c in (v.get("candidatas") or [])]
+               for k, v in paq.items() if k in PAQUETES}
+    else:
+        out = {"corto": [{"ticker": c["ticker"], "tier": c.get("tier")} for c in (inf.get("candidatas") or [])]}
+    div = inf.get("dividendos")
+    if isinstance(div, dict) and div.get("candidatas"):
+        out[PAQ_DIV] = [{"ticker": c["ticker"], "tier": None} for c in div["candidatas"]]
+    return out
+
+
+def _universo_div(inf: dict) -> list[str]:
+    div = inf.get("dividendos")
+    return [yahoo(t) for t in ((div or {}).get("universo") or [])] if isinstance(div, dict) else []
 
 
 def tickers_necesarios(filas: list[dict], max_informes_universo: int = 12) -> set[str]:
@@ -70,10 +83,14 @@ def tickers_necesarios(filas: list[dict], max_informes_universo: int = 12) -> se
     informes = primeros_por_mes(filas)
     for i, f in enumerate(informes):
         inf = f["informe"]
-        for lista in _picks(inf).values():
+        picks = _picks(inf)
+        for lista in picks.values():
             out.update(yahoo(c["ticker"]) for c in lista)
+        if PAQ_DIV in picks:
+            out.add(BENCH_DIV)
         if i >= len(informes) - max_informes_universo:
             out.update(yahoo(t) for t in (inf.get("universo") or []))
+            out.update(_universo_div(inf))
     return out
 
 
@@ -124,10 +141,16 @@ def calcular(filas: list[dict], precios: pd.DataFrame, hasta: pd.Timestamp) -> d
         rend_univ = [_rent(precios, t, ini, hasta) for t in universo]
         n_univ = sum(1 for x in rend_univ if x is not None)
         pool = _media(rend_univ) if n_univ >= MIN_UNIVERSO else None
+        # La sección de dividendos se compara con el Russell 2000 (IWM) y con SU universo.
+        iwm = _rent(precios, BENCH_DIV, ini, hasta)
+        rend_div = [_rent(precios, t, ini, hasta) for t in _universo_div(inf)]
+        pool_div = _media(rend_div) if sum(1 for x in rend_div if x is not None) >= MIN_UNIVERSO else None
 
         for paquete, lista in _picks(inf).items():
             if not lista:
                 continue
+            es_div = paquete == PAQ_DIV
+            ref_ret, pool_ret = (iwm, pool_div) if es_div else (spy, pool)
             filas_pick = []
             sin_precio = []
             for c in lista:
@@ -144,14 +167,15 @@ def calcular(filas: list[dict], precios: pd.DataFrame, hasta: pd.Timestamp) -> d
                 "n": len(lista), "n_sin_precio": len(sin_precio), "sin_precio": sin_precio,
                 "dias": dias,
                 "rent": None if rent is None else round(rent, 4),
-                "spy": None if spy is None else round(spy, 4),
-                "pool": None if pool is None else round(pool, 4),
-                "exceso": None if rent is None or spy is None else round(rent - spy, 4),
-                "exceso_pool": None if rent is None or pool is None else round(rent - pool, 4),
+                "ref": BENCH_DIV if es_div else BENCHMARK,
+                "spy": None if ref_ret is None else round(ref_ret, 4),          # rentabilidad de la referencia (SPY o IWM)
+                "pool": None if pool_ret is None else round(pool_ret, 4),
+                "exceso": None if rent is None or ref_ret is None else round(rent - ref_ret, 4),
+                "exceso_pool": None if rent is None or pool_ret is None else round(rent - pool_ret, 4),
                 "picks": filas_pick,
             })
 
-    resumen = {p: _resumen([c for c in cohortes if c["paquete"] == p]) for p in PAQUETES}
+    resumen = {p: _resumen([c for c in cohortes if c["paquete"] == p]) for p in TODOS}
     return {
         "hasta": f"{hasta:%Y-%m-%d}",
         "cohortes": cohortes,

@@ -63,6 +63,7 @@ URL_IWM = ("https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/
            "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund")
 URL_IWM_PRODUCTO = "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
 URL_SP600 = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
+URL_SP400 = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) inversor-lp/1.0"}
 FRECUENCIAS = (1, 2, 4, 12)
 
@@ -527,6 +528,7 @@ def generar_seccion(
 
     motivos: dict[str, int] = {}
     base = []
+    estado: dict[str, dict] = {}       # todas las que pagan: precio y si han recortado o parado (para vigilar tu cartera)
     n_con_datos = n_paga = 0
     for fila in universo:
         t = fila["ticker"]
@@ -539,6 +541,8 @@ def generar_seccion(
         an = analizar_dividendo(d.get("div"), precio, hoy, r)
         if an.get("paga"):
             n_paga += 1
+            estado[t] = {"n": fila.get("nombre") or "", "s": fila.get("sector") or "", "p": round(precio, 2),
+                         "f": "parado" if not an["pagando"] else ("recorte" if an["recortes_5a"] > 0 else "ok")}
         caida = caida_52s(close)
         ok, motivo = puerta_dividendo(an, caida, r)
         if not ok:
@@ -627,8 +631,50 @@ def generar_seccion(
         "referencia": ref, "grupo": grupo,
         "candidatas": cand, "en_espera": espera,
         "universo": sorted(x["fila"]["ticker"] for x in elegibles),
+        "estado": estado,
         "avisos": avisos,
     }
+
+
+def limpiar_json(x):
+    """Tipos de numpy → Python y NaN/inf → None, para que el informe sea JSON estricto
+    (Postgres rechaza NaN)."""
+    if isinstance(x, dict):
+        return {str(k): limpiar_json(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [limpiar_json(v) for v in x]
+    if isinstance(x, (np.bool_, bool)):
+        return bool(x)
+    if isinstance(x, (np.integer,)):
+        return int(x)
+    if isinstance(x, (np.floating, float)):
+        v = float(x)
+        return v if np.isfinite(v) else None
+    return x
+
+
+def volcar_estado(inf: dict) -> int:
+    """Mueve `dividendos.estado` a `inf["empresas"]` (campo `dv`: ok | recorte | parado) para que
+    el Vigía pueda valorar y vigilar las acciones de dividendos que tengas, aunque ya no sean
+    candidatas. Devuelve cuántas empresas se añadieron o marcaron."""
+    sec = inf.get("dividendos")
+    if not isinstance(sec, dict):
+        return 0
+    estado = sec.pop("estado", None) or {}
+    emp = inf.setdefault("empresas", {})
+    por_yahoo = {_norm(k): k for k in emp}
+    cand = {c["ticker"] for c in sec.get("candidatas", [])}
+    n = 0
+    for t, x in estado.items():
+        clave = por_yahoo.get(t, t)
+        e = emp.get(clave)
+        if e is None:
+            e = emp[clave] = {"n": x["n"], "v": None, "sec": x["s"], "p": x["p"], "e": "normal"}
+        e["dv"] = x["f"]
+        if t in cand:
+            e["pk"] = sorted(set(e.get("pk") or []) | {"dividendos"})
+        n += 1
+    return n
 
 
 def criterios(r: ReglasDividendos) -> list[str]:
@@ -709,6 +755,29 @@ def _tabla_ishares() -> pd.DataFrame:
 
 
 
+def _lista_wikipedia(url: str, minimo: int) -> list[dict]:
+    """Tabla de componentes de un índice de Wikipedia → filas {ticker, nombre, sector}."""
+    import requests
+    r = requests.get(url, headers=UA, timeout=60)
+    r.raise_for_status()
+    for t in pd.read_html(io.StringIO(r.text)):
+        col = next((c for c in t.columns if str(c).strip().lower() in ("symbol", "ticker symbol", "ticker")), None)
+        if col is None or len(t) < minimo:
+            continue
+        nom = next((c for c in t.columns if str(c).strip().lower() in ("security", "company")), None)
+        sec = next((c for c in t.columns if "gics sector" in str(c).strip().lower()), None)
+        filas, vistos = [], set()
+        for _, row in t.iterrows():
+            tk = _norm(row[col])
+            if not _ticker_valido(tk) or tk in vistos:
+                continue
+            vistos.add(tk)
+            filas.append({"ticker": tk, "nombre": str(row[nom]) if nom else "", "sector": str(row[sec]) if sec else ""})
+        if len(filas) >= minimo:
+            return filas
+    raise ValueError("no se encontró la tabla de componentes")
+
+
 def universo_russell2000() -> tuple[list[dict], str]:
     """Componentes del ETF IWM (iShares). Si no se puede, S&P SmallCap 600 (Wikipedia).
     Devuelve (filas {ticker, nombre, sector}, fuente)."""
@@ -729,28 +798,23 @@ def universo_russell2000() -> tuple[list[dict], str]:
         print(f"Aviso: el fichero de iShares trae solo {len(filas)} empresas; se prueba con el S&P 600.")
     except Exception as e:  # noqa: BLE001
         print(f"Aviso: no se pudo leer la lista de IWM en iShares ({type(e).__name__}: {e}); se prueba con el S&P 600.")
-    try:
-        r = requests.get(URL_SP600, headers=UA, timeout=60)
-        r.raise_for_status()
-        for t in pd.read_html(io.StringIO(r.text)):
-            col = next((c for c in t.columns if str(c).strip().lower() in ("symbol", "ticker symbol", "ticker")), None)
-            if col is None or len(t) < 400:
-                continue
-            nom = next((c for c in t.columns if str(c).strip().lower() in ("security", "company")), None)
-            sec = next((c for c in t.columns if "gics sector" in str(c).strip().lower()), None)
-            filas, vistos = [], set()
-            for _, row in t.iterrows():
-                tk = _norm(row[col])
-                if not _ticker_valido(tk) or tk in vistos:
-                    continue
-                vistos.add(tk)
-                filas.append({"ticker": tk, "nombre": str(row[nom]) if nom else "",
-                              "sector": str(row[sec]) if sec else ""})
-            if len(filas) >= 400:
-                print(f"S&P 600: {len(filas)} empresas (Wikipedia). Es un sustituto más pequeño del Russell 2000.")
-                return filas, "S&P SmallCap 600 (sustituto del Russell 2000)"
-    except Exception as e:  # noqa: BLE001
-        print(f"Aviso: tampoco se pudo leer el S&P 600 ({e}).")
+    filas, vistos, partes = [], set(), []
+    for nombre, url, minimo in (("S&P 600", URL_SP600, 400), ("S&P 400", URL_SP400, 300)):
+        try:
+            nuevas = _lista_wikipedia(url, minimo)
+        except Exception as e:  # noqa: BLE001
+            print(f"Aviso: no se pudo leer el {nombre} ({type(e).__name__}: {e}).")
+            continue
+        n0 = len(filas)
+        for f in nuevas:
+            if f["ticker"] not in vistos:
+                vistos.add(f["ticker"])
+                filas.append(f)
+        partes.append(nombre)
+        print(f"{nombre}: {len(filas) - n0} empresas (Wikipedia).")
+    if len(filas) >= 400:
+        print(f"Lista final: {len(filas)} empresas de {' + '.join(partes)} (sustituto del Russell 2000; el filtro de tamaño se aplica después).")
+        return filas, f"{' + '.join(partes)} (sustituto del Russell 2000)"
     raise RuntimeError("No se pudo obtener ninguna lista de small caps (iShares ni Wikipedia).")
 
 
@@ -844,8 +908,8 @@ def generar(hoy: date | None = None, *, max_empresas: int = 0, reglas: ReglasDiv
     print(f"Cobertura de precios: {cobertura:.0%}")
     if cobertura < 0.6:
         raise RuntimeError(f"Solo se descargó el {cobertura:.0%} de las empresas: resultado poco fiable.")
-    return generar_seccion(universo, datos, hoy, f_empresa=fundamentos_sec() if con_sec else None,
-                           reglas=reglas, fuente=fuente)
+    return limpiar_json(generar_seccion(universo, datos, hoy, f_empresa=fundamentos_sec() if con_sec else None,
+                                        reglas=reglas, fuente=fuente))
 
 
 # --------------------------------------------------------------------------- #

@@ -35,6 +35,11 @@ on:
         type: boolean
         required: false
         default: true
+      con_dividendos:
+        description: "Incluir la sección de small caps con dividendo (añade unos 15-25 minutos)"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   issues: write
@@ -43,7 +48,7 @@ permissions:
 jobs:
   recomendar:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -66,12 +71,14 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CON_IA: ${{ github.event.inputs.con_ia || 'true' }}
           GUARDAR: ${{ github.event.inputs.guardar || 'true' }}
+          CON_DIV: ${{ github.event.inputs.con_dividendos || 'true' }}
         run: |
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="${GITHUB_REPOSITORY#*/}"
           EXTRA=""
           if [ "$CON_IA" != "true" ]; then EXTRA="--sin-ia"; fi
           if [ "$GUARDAR" != "true" ]; then EXTRA="$EXTRA --sin-supabase"; fi
+          if [ "$CON_DIV" != "true" ]; then EXTRA="$EXTRA --sin-dividendos"; fi
           python -m mensual.recomendador $EXTRA \
             --salida informe_mensual.json --md issue_mensual.md \
             --url-dashboard "https://${OWNER}.github.io/${REPO}/"
@@ -110,9 +117,11 @@ jobs:
 
             const paq = inf.paquetes || {};
             const num = (k) => (paq[k] ? paq[k].candidatas.length : 0);
+            const nDiv = inf.dividendos && inf.dividendos.candidatas ? inf.dividendos.candidatas.length : null;
             let titulo;
             if (paq.medio || paq.largo) {
-              titulo = `📅 ${inf.mes}: 1–3 años ${num('corto')} · 3–5 años ${num('medio')} · 5+ años ${num('largo')}`;
+              titulo = `📅 ${inf.mes}: 1–3 años ${num('corto')} · 3–5 años ${num('medio')} · 5+ años ${num('largo')}`
+                + (nDiv != null ? ` · dividendos ${nDiv}` : '');
             } else {
               const n = inf.resumen.n_candidatas;
               titulo = n === 0

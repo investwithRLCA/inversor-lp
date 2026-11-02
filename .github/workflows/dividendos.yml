@@ -49,11 +49,13 @@ jobs:
         run: |
           for u in \
             "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund" \
-            "https://raw.githubusercontent.com/ikoniaris/Russell3000/master/russell3000.csv" \
-            "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"; do
+            "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/1467271812596.ajax?tab=all&fileType=json" \
+            "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"; do
             echo "== $u"
             curl -sS -L -m 40 -A "Mozilla/5.0 (X11; Linux x86_64)" -o /tmp/s.txt -w "HTTP %{http_code} · %{size_download} bytes · %{content_type}\n" "$u" || echo "fallo de red"
-            head -c 300 /tmp/s.txt | tr '\n' ' ' ; echo
+            head -c 200 /tmp/s.txt | tr '\n' ' ' ; echo
+            grep -o 'href="[^"]*ajax[^"]*"' /tmp/s.txt | head -5 || true
+            grep -o '[A-Za-z/.0-9_-]*IWM_holdings[A-Za-z/.0-9?&=_-]*' /tmp/s.txt | head -3 || true
           done
 
       - name: Analizar los dividendos

@@ -543,7 +543,7 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
         if any("parte alta de su rango" in av for c in P["candidatas"] for av in c.get("avisos", [])):
             A("_Varias cotizan en la parte alta de su rango de 5 años (normal en negocios que crecen "
               "mucho): si compras, mejor escalonado en varios meses._\n")
-    if cands or any((paq.get(k) or {}).get("candidatas") for k in ("medio", "largo")):
+    if cands or any((paq.get(k) or {}).get("candidatas") for k in ("medio", "largo")) or (inf.get("dividendos") or {}).get("candidatas"):
         A("**Reparto orientativo:** a partes iguales dentro de cada paquete, con tope por empresa. "
           "Cuánto compras de cada una depende de tu importe y de lo que ya tengas: "
           "se calcula en tu móvil.\n")
@@ -553,17 +553,47 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
             A(f"- {v['ticker']}: {v['motivo']}")
         A("")
 
+    div = inf.get("dividendos")
+    if isinstance(div, dict):
+        A("### 💰 Dividendos · small caps que no recortan\n")
+        if not div.get("candidatas"):
+            A("Ninguna small cap cumple hoy todos los criterios (dividendo sin recortes, cubierto por la caja, sin diluir).\n")
+        else:
+            A("| Empresa | Precio | Rent. div. | Crec. div. | Años sin recorte | Reparte | Acciones 5a | 5a: precio + div = total |")
+            A("|---|---:|---:|---:|---:|---:|---:|---|")
+            for c in div["candidatas"]:
+                d, e = c["dividendo"], c["empresa"]
+                r5 = (c.get("rend") or {}).get("5a") or (c.get("rend") or {}).get("3a")
+                cg = d.get("cagr_5a") if d.get("cagr_5a") is not None else d.get("cagr_3a")
+                n1 = lambda v, s="": "—" if v is None else f"{v:.0f}{s}"  # noqa: E731
+                A(f"| **{c['ticker']}** · {c['nombre']} | {c['precio']:.2f} | "
+                  f"{'—' if d.get('rentab_div') is None else format(d['rentab_div'], '.1f') + ' %'} | "
+                  f"{'—' if cg is None else format(cg, '+.1f') + ' %'} | {n1(d.get('anios_sin_recorte'))} | "
+                  f"{n1(e.get('payout'), ' %')} | {n1(e.get('dilucion_5a'), ' %')} | "
+                  f"{('%+.1f + %+.1f = %+.1f %%/año' % (r5['precio'], r5['div'], r5['total'])) if r5 else '—'} |")
+            A("")
+            ref = ((div.get("referencia") or {}).get("rend") or {}).get("5a")
+            if ref:
+                A(f"Russell 2000 (IWM) en 5 años: precio {ref['precio']:+.1f} + dividendo {ref['div']:+.1f} = "
+                  f"{ref['total']:+.1f} %/año. Son empresas que hoy siguen en el índice (supervivientes): "
+                  "lo pasado no es una promesa.\n")
+            for c in div["candidatas"]:
+                for av in c.get("avisos", []):
+                    A(f"- ⚠️ **{c['ticker']}**: {av}")
+            A("")
+
     seg = inf.get("seguimiento")
     if seg:
         A("### 🔎 ¿Están funcionando los paquetes? (seguimiento automático)\n")
         mad = False
-        for clave in ("corto", "medio", "largo"):
+        for clave in ("corto", "medio", "largo", "dividendos"):
             s = (seg.get("resumen") or {}).get(clave) or {}
             if s.get("cohortes_maduras"):
                 mad = True
                 sup = f"{s['superan_spy']}/{s['cohortes_maduras']}"
-                A(f"- **{pq.INFO[clave]['etiqueta']}**: {s['cohortes_maduras']} cohorte(s) con ≥3 meses; "
-                  f"exceso medio sobre el S&P 500 {_pp(s['exceso_medio'])} "
+                etiqueta = "Dividendos" if clave == "dividendos" else pq.INFO[clave]["etiqueta"]
+                A(f"- **{etiqueta}**: {s['cohortes_maduras']} cohorte(s) con ≥3 meses; "
+                  f"exceso medio sobre {'el Russell 2000' if clave == 'dividendos' else 'el S&P 500'} {_pp(s['exceso_medio'])} "
                   f"(superó al índice en {sup})"
                   + (f"; sobre el resto del universo {_pp(s['exceso_medio_pool'])}" if s.get("exceso_medio_pool") is not None else "")
                   + ".")
@@ -703,6 +733,8 @@ def main() -> None:
     ap.add_argument("--salida", default="informe_mensual.json", help="dónde escribir el JSON")
     ap.add_argument("--md", default="issue_mensual.md", help="dónde escribir el Markdown del Issue")
     ap.add_argument("--url-dashboard", default=None, help="enlace al Vigía para el Issue")
+    ap.add_argument("--sin-dividendos", action="store_true",
+                    help="no generar la sección de small caps con dividendo (Yahoo + SEC, unos 15-25 minutos)")
     ap.add_argument("--max-universo", type=int, default=2500,
                     help="tope de empresas del universo cuyo precio se descarga (por seguridad)")
     args = ap.parse_args()
@@ -742,6 +774,19 @@ def main() -> None:
         f_tesis_texto=lambda t: texto_tesis(repo, t),
         previos=previos,
     )
+
+    if not args.sin_dividendos:
+        # Sección aparte (otro universo: small caps del Russell 2000). Si falla, el resto del
+        # informe sigue adelante: sólo se avisa.
+        try:
+            from . import dividendos as dv
+            inf["dividendos"] = dv.generar(date.today())
+            dv.volcar_estado(inf)
+            d = inf["dividendos"]
+            print(f"\nDividendos: {d['resumen']} · elegidas {[c['ticker'] for c in d['candidatas']]}")
+        except Exception as e:  # noqa: BLE001
+            log.exception("Sección de dividendos no disponible")
+            inf["avisos"].append(f"No se pudo generar la sección de dividendos: {e}")
 
     with open(args.salida, "w", encoding="utf-8") as f:
         json.dump(inf, f, ensure_ascii=False)
