@@ -1,0 +1,74 @@
+name: Dividendos en small caps
+
+# Analiza las small caps (Russell 2000) que pagan dividendo y NO lo recortan:
+# dividendo por acción estable o creciente, cubierto por la caja, con recompras
+# o sin dilución. Muestra la rentabilidad anual como precio + dividendo frente
+# al Russell 2000 (ETF IWM).
+#
+# Es la misma sección que sale en el informe mensual; aquí se puede lanzar a
+# mano y sin tocar la base de datos.
+#
+# Lanzarlo: pestaña "Actions" → "Dividendos en small caps" → "Run workflow".
+# El resultado aparece en la página de la ejecución (resumen).
+# Solo usa datos públicos de empresas: nada de tu cartera.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_empresas:
+        description: "Solo para pruebas: limitar a las N primeras empresas (0 = todas)"
+        type: string
+        required: false
+        default: "0"
+      sin_sec:
+        description: "No consultar la SEC (solo dividendos y precio; no recomienda nada)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  dividendos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-mensual.txt lxml html5lib
+
+      - name: Analizar los dividendos
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          MAX_EMPRESAS: ${{ github.event.inputs.max_empresas || '0' }}
+          SIN_SEC: ${{ github.event.inputs.sin_sec || 'false' }}
+        run: |
+          N="${MAX_EMPRESAS//[^0-9]/}"
+          EXTRA="--max-empresas ${N:-0}"
+          if [ "$SIN_SEC" = "true" ]; then EXTRA="$EXTRA --sin-sec"; fi
+          python -W ignore -m mensual.dividendos $EXTRA --salida resultados_dividendos
+
+      - name: Mostrar el informe en la página de la ejecución
+        if: always()
+        run: |
+          if [ -f backend/resultados_dividendos/informe.md ]; then
+            cat backend/resultados_dividendos/informe.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No se generó informe (mira el log del paso anterior)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guardar resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dividendos
+          path: backend/resultados_dividendos/
+          if-no-files-found: ignore
