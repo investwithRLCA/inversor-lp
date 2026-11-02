@@ -61,6 +61,7 @@ log = logging.getLogger(__name__)
 IWM = "IWM"
 URL_IWM = ("https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
            "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund")
+URL_IWM_PRODUCTO = "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
 URL_SP600 = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) inversor-lp/1.0"}
 FRECUENCIAS = (1, 2, 4, 12)
@@ -659,19 +660,61 @@ def _ticker_valido(t: str) -> bool:
     return bool(t) and t != "-" and t.replace("-", "").isalpha() and len(t) <= 6
 
 
+def _tabla_ishares() -> pd.DataFrame:
+    """Tabla de posiciones del ETF IWM desde iShares. La URL de descarga cambia de vez en
+    cuando: si la directa devuelve la página del producto en vez del CSV, se busca ahí el
+    enlace actual de «descargar posiciones»."""
+    import html as _html
+    import requests
+    cab = {**UA, "Accept": "text/csv,text/html;q=0.9,*/*;q=0.8", "Referer": URL_IWM_PRODUCTO}
+
+    def pedir(url: str) -> str:
+        r = requests.get(url, headers=cab, timeout=90)
+        r.raise_for_status()
+        return r.text.lstrip("\ufeff")
+
+    def tabla(texto: str):
+        lineas = texto.splitlines()
+        ini = next((i for i, l in enumerate(lineas) if l.replace('"', "").startswith("Ticker,")), None)
+        if ini is None:
+            return None
+        df = pd.read_csv(io.StringIO("\n".join(lineas[ini:])), on_bad_lines="skip")
+        df.columns = [str(c).strip() for c in df.columns]
+        if "Asset Class" in df.columns:
+            df = df[df["Asset Class"].astype(str).str.strip().str.lower() == "equity"]
+        return df
+
+    texto = pedir(URL_IWM)
+    df = tabla(texto)
+    if df is not None and len(df):
+        return df
+    base = "https://www.ishares.com"
+    candidatos: list[str] = []
+    for fuente in (texto, None):
+        if fuente is None:
+            fuente = pedir(URL_IWM_PRODUCTO)
+        for m in re.finditer(r'href="([^"]*\.ajax\?[^"]*fileType=csv[^"]*)"', fuente):
+            u = _html.unescape(m.group(1))
+            u = u if u.startswith("http") else base + u
+            if "IWM" in u.upper() and u not in candidatos and u != URL_IWM:
+                candidatos.append(u)
+        if candidatos:
+            break
+    for u in candidatos[:3]:
+        df = tabla(pedir(u))
+        if df is not None and len(df):
+            print(f"  (enlace de descarga encontrado en la página del producto)")
+            return df
+    raise ValueError(f"iShares no devolvió el CSV (respuesta de {len(texto)} bytes; enlaces probados: {len(candidatos)})")
+
+
+
 def universo_russell2000() -> tuple[list[dict], str]:
     """Componentes del ETF IWM (iShares). Si no se puede, S&P SmallCap 600 (Wikipedia).
     Devuelve (filas {ticker, nombre, sector}, fuente)."""
     import requests
     try:
-        r = requests.get(URL_IWM, headers=UA, timeout=60)
-        r.raise_for_status()
-        lineas = r.text.lstrip("﻿").splitlines()
-        ini = next(i for i, l in enumerate(lineas) if l.replace('"', "").startswith("Ticker,"))
-        df = pd.read_csv(io.StringIO("\n".join(lineas[ini:])), on_bad_lines="skip")
-        df.columns = [str(c).strip() for c in df.columns]
-        if "Asset Class" in df.columns:
-            df = df[df["Asset Class"].astype(str).str.strip().str.lower() == "equity"]
+        df = _tabla_ishares()
         filas, vistos = [], set()
         for _, row in df.iterrows():
             t = _norm(row.get("Ticker"))
