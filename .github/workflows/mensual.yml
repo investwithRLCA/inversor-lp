@@ -28,6 +28,11 @@ on:
         type: boolean
         required: false
         default: true
+      guardar:
+        description: "Guardar el informe en Supabase (desmárcalo para una prueba que no toca la base de datos)"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   issues: write
@@ -58,11 +63,13 @@ jobs:
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CON_IA: ${{ github.event.inputs.con_ia || 'true' }}
+          GUARDAR: ${{ github.event.inputs.guardar || 'true' }}
         run: |
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
           REPO="${GITHUB_REPOSITORY#*/}"
           EXTRA=""
           if [ "$CON_IA" != "true" ]; then EXTRA="--sin-ia"; fi
+          if [ "$GUARDAR" != "true" ]; then EXTRA="$EXTRA --sin-supabase"; fi
           python -m mensual.recomendador $EXTRA \
             --salida informe_mensual.json --md issue_mensual.md \
             --url-dashboard "https://${OWNER}.github.io/${REPO}/"
