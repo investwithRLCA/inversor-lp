@@ -16,7 +16,7 @@
   const TOPE_POSICION = 0.25;
   const MESES_REVISION = 24;
   const TESIS_ANTIGUA_DIAS = 200;
-  const PAQUETES = ["corto", "medio", "largo"];       // 1-3 años, 3-5 años, 5+ años
+  const PAQUETES = ["corto", "medio", "largo", "dividendos"]; // 1-3 años, 3-5 años, 5+ años, small caps con dividendo
 
   // ───────────────────────── fechas ─────────────────────────
 
@@ -145,6 +145,13 @@
       if (e.qp === false) {
         m.push("Ya no pasa el cribado cuantitativo del bot (calidad, caja o solvencia han empeorado " +
                "en sus últimas cuentas). Relee la tesis: es motivo para revisar, no para vender a ciegas."); sube("revisar");
+      }
+      if (e.dv === "recorte" || e.dv === "parado") {
+        const roto = f.paq === "dividendos";
+        m.push((e.dv === "parado" ? "Ha dejado de pagar dividendo." : "Ha recortado el dividendo por acción en los últimos 5 años.") +
+               (roto ? " Era la razón de estar en el paquete de dividendos: la tesis está rota, es el motivo serio para plantearse vender."
+                     : " Revisa si sigue encajando con lo que buscas."));
+        sube(roto ? "rota" : "revisar");
       }
       if (e.v === "DESCARTE" || e.v === "NO_INVERTIBLE") {
         m.push("Tesis rota: el bot de largo plazo ya la marca como " + e.v.replace("_", " ") +

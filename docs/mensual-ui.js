@@ -75,11 +75,23 @@
     return { calc, val, valorPos };
   }
 
-  const NOMBRE_PAQ = { corto: "1–3 años", medio: "3–5 años", largo: "5+ años" };
+  const NOMBRE_PAQ = { corto: "1–3 años", medio: "3–5 años", largo: "5+ años", dividendos: "Dividendos" };
+  const PAQS_ORDEN = ["corto", "medio", "largo", "dividendos"];
 
   /** Los paquetes del informe; si es un informe antiguo (solo candidatas), un paquete corto. */
   function paquetesDe(inf) {
-    if (inf.paquetes && Object.keys(inf.paquetes).length) return inf.paquetes;
+    const base = baseDe(inf);
+    const d = inf.dividendos;
+    if (d && typeof d === "object" && !base.dividendos) {
+      base.dividendos = { nombre: d.nombre, horizonte: d.horizonte, etiqueta: d.etiqueta || "Dividendos", descripcion: d.descripcion,
+                          criterios: d.criterios || [], n_aptas: (d.resumen || {}).n_elegibles, candidatas: d.candidatas || [],
+                          vetadas: [], en_espera: (d.en_espera || []).map((c) => ({ ticker: c.ticker, motivo: `${num(c.puntos, 0)} puntos; fuera del máximo o del tope por sector` })),
+                          esDividendos: true };
+    }
+    return base;
+  }
+  function baseDe(inf) {
+    if (inf.paquetes && Object.keys(inf.paquetes).length) return { ...inf.paquetes };
     return { corto: { nombre: "Descuento con tesis", horizonte: "1–3 años", etiqueta: "1–3 años", descripcion: "", criterios: [],
                       n_aptas: (inf.candidatas || []).length, candidatas: inf.candidatas || [],
                       vetadas: inf.vetadas || [], en_espera: inf.en_espera || [] } };
@@ -109,11 +121,17 @@
     const abierta = abiertos.has(clave);
     const avisos = (c.avisos || []).concat(dosMeses);
     const esCalidad = paquete !== "corto";
-    const subPrecio = c.descuento != null ? `${signo(-c.descuento * 100, 0)} % vs su mediana 5a` : "";
+    const esDiv = paquete === "dividendos";
+    const dv = c.dividendo || {}, emp = c.empresa || {};
+    const r5 = (c.rend || {})["5a"] || (c.rend || {})["3a"];
+    const nr5 = (c.rend || {})["5a"] ? "5 años" : "3 años";
+    const cagrDiv = dv.cagr_5a != null ? dv.cagr_5a : dv.cagr_3a;
+    const subPrecio = esDiv ? (c.cap != null ? `cap. ${num(c.cap, 0)} M$` : "")
+      : (c.descuento != null ? `${signo(-c.descuento * 100, 0)} % vs su mediana 5a` : "");
     return `<article class="m-cand ${abierta ? "abierta" : ""}" data-t="${esc(c.ticker)}">
       <div class="m-cab">
         <div><div class="m-tk">${esc(c.ticker)} ${c.doble_descuento ? '<span title="Por debajo del precio de entrada de la tesis">⭐</span>' : ""}
-            ${pillNivel(c)}</div>
+            ${esDiv ? chip(num(dv.rentab_div, 1) + " % dividendo", "m-bien") : pillNivel(c)}</div>
             <div class="m-nombre">${esc(c.nombre)}${c.sector ? " · " + esc(c.sector) : ""}</div></div>
         <div class="m-precio num">${num(c.precio)}<small>${esCalidad && c.puntos != null ? "puntos " + num(c.puntos, 0) + " · " : ""}${esc(subPrecio)}</small></div>
       </div>
@@ -123,8 +141,10 @@
           : `<span class="m-dim">Ya pesa el tope en tu cartera mensual: no añadas más.</span>`)
         : `<span class="m-dim">Reparto orientativo: ${pct(c.peso)} del importe</span>`}</div>
       ${esCalidad && c.clave ? `<div class="m-dim m-linea">${esc(lineaClave(c.clave))}</div>` : ""}
+      ${esDiv ? `<div class="m-dim m-linea">Dividendo ${usd(dv.dps)} por acción al año · ${num(dv.anios_sin_recorte, 0)} años sin recorte${cagrDiv != null ? " · crece " + signo(cagrDiv, 1) + " %/año" : ""}${emp.payout != null ? " · reparte el " + num(emp.payout, 0) + " % de su " + (emp.financiera ? "beneficio/caja" : "caja libre") : ""}${emp.dilucion_5a != null ? " · acciones 5a " + signo(emp.dilucion_5a, 0) + " %" : ""}</div>` : ""}
       <div class="m-chips">
         ${esCalidad && c.calidad != null ? chip("calidad " + num(c.calidad, 0)) + chip("crecimiento " + num(c.crecimiento, 0)) + chip("precio " + num(c.valoracion, 0)) : ""}
+        ${esDiv && r5 ? chip(nr5 + ": precio " + signo(r5.precio, 1) + " + dividendo " + signo(r5.div, 1) + " = " + signo(r5.total, 1) + " %/año") : ""}
         ${ia ? chip("IA: " + ia.tipo + " (" + ia.confianza + ")", ia.tipo === "estructural" ? "m-mal" : ia.tipo === "temporal" ? "m-bien" : "") : ""}
         ${avisos.length ? chip("⚠ " + avisos.length + " aviso(s)", "m-warn") : ""}
       </div>
@@ -140,7 +160,7 @@
               : `<p class="m-dim">Sin explicación de la IA en este informe.</p>`) : ""}
         ${c.salud ? `<p><strong>Último trimestre:</strong> ${esc(c.salud.resumen)}</p>` : ""}
         ${c.tesis ? `<p><strong>Tesis (IA):</strong> ${esc(c.tesis)}</p>` : ""}
-        ${tieneTesis(c)
+        ${esDiv ? "" : tieneTesis(c)
           ? `<p><strong>Tesis:</strong> nota ${c.nota ?? "—"}/10 · rango de valor ${c.valor_min ?? "—"}–${c.valor_max ?? "—"} · precio de entrada ${c.precio_entrada ?? "—"}${c.tesis_dias != null ? ` · analizada hace ${c.tesis_dias} días` : ""}</p>`
           : `<p class="m-dim">Sin tesis de IA todavía: nota de cribado cuantitativo ${c.quant ?? "—"}/100.</p>`}
         ${avisos.map((a) => `<p class="m-aviso">⚠️ ${esc(a)}</p>`).join("")}
@@ -149,10 +169,35 @@
     </article>`;
   }
 
+  /** Comparador de las elegidas de la sección de dividendos: precio + dividendo = rentabilidad total. */
+  function tablaDividendos(d) {
+    const cs = d.candidatas || [];
+    if (!cs.length) return "";
+    const ref = ((d.referencia || {}).rend || {})["5a"];
+    const gr = ((d.grupo || {})["5a"]) || {};
+    const fila = (c) => {
+      const dv = c.dividendo || {}, e = c.empresa || {}, r = (c.rend || {})["5a"];
+      const cg = dv.cagr_5a != null ? dv.cagr_5a : dv.cagr_3a;
+      const bate = r && ref ? r.total >= ref.total : null;
+      return `<tr><td><strong>${esc(c.ticker)}</strong></td><td class="num">${num(dv.rentab_div, 1)} %</td><td class="num">${cg != null ? signo(cg, 1) + " %" : "—"}</td>
+        <td class="num">${num(dv.anios_sin_recorte, 0)}</td><td class="num">${e.payout != null ? num(e.payout, 0) + " %" : "—"}</td>
+        <td class="num">${e.dilucion_5a != null ? signo(e.dilucion_5a, 0) + " %" : "—"}</td>
+        <td class="num">${r ? signo(r.precio, 1) : "—"}</td><td class="num">${r ? signo(r.div, 1) : "—"}</td>
+        <td class="num"><strong class="${bate == null ? "" : bate ? "m-pos" : "m-neg"}">${r ? signo(r.total, 1) + " %" : "—"}</strong></td></tr>`;
+    };
+    return `<details class="m-det" open><summary>Comparar las ${cs.length} elegidas</summary>
+      <p class="m-dim">Rentabilidad anual media de los últimos 5 años = lo que ha subido el precio + lo que ha dado de dividendo. Verde = mejor que el Russell 2000. Son empresas que hoy siguen cotizando (supervivientes): dice lo que pasó, no lo que pasará.</p>
+      <div class="m-scroll"><table class="m-tabla m-comp"><tr><th>Empresa</th><th>Dividendo</th><th>Crece/año</th><th>Años sin recorte</th><th>Reparte</th><th>Acciones 5a</th><th>Precio 5a</th><th>+ Dividendo</th><th>= Total/año</th></tr>
+      ${cs.map(fila).join("")}
+      ${ref ? `<tr class="m-ref"><td>Russell 2000 (IWM)</td><td></td><td></td><td></td><td></td><td></td><td class="num">${signo(ref.precio, 1)}</td><td class="num">${signo(ref.div, 1)}</td><td class="num"><strong>${signo(ref.total, 1)} %</strong></td></tr>` : ""}
+      ${gr.total != null ? `<tr class="m-ref"><td>Mediana de las elegibles${gr.n ? " (" + gr.n + ")" : ""}</td><td></td><td></td><td></td><td></td><td></td><td class="num">${signo(gr.precio, 1)}</td><td class="num">${gr.precio != null ? signo(gr.total - gr.precio, 1) : "—"}</td><td class="num"><strong>${signo(gr.total, 1)} %</strong></td></tr>` : ""}
+      </table></div></details>`;
+  }
+
   function seccionPaquetes() {
     const inf = informe;
     const paqs = paquetesDe(inf);
-    const claves = ["corto", "medio", "largo"].filter((k) => paqs[k]);
+    const claves = PAQS_ORDEN.filter((k) => paqs[k]);
     if (!claves.includes(cfg.paquete)) cfg.paquete = claves[0];
     const sel = cfg.paquete, P = paqs[sel];
     const importe = parseFloat(String(cfg.importe).replace(",", "."));
@@ -175,7 +220,9 @@
             ${P.descripcion ? `<p class="m-dim">${esc(P.descripcion)}</p>` : ""}
             ${(P.criterios || []).length ? `<details class="m-det"><summary>Criterios exactos</summary><ul>${P.criterios.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
           </div>`;
-    if (sel !== "corto") {
+    if (sel === "dividendos") {
+      h += `<div class="m-aviso">Esta sección <strong>no se ha podido probar en el pasado</strong> (faltan las empresas que quebraron o salieron del índice, y las cifras históricas de abajo son de supervivientes). Mira «Seguimiento» más abajo antes de poner dinero serio. Ojo fiscal: los dividendos tributan cada año como ahorro (en EE. UU. retienen un 15 % que normalmente puedes descontar), la revalorización solo al vender.</div>`;
+    } else if (sel !== "corto") {
       h += `<div class="m-aviso">Este paquete <strong>no se ha podido probar en el pasado</strong> (haría falta saber qué datos financieros había en cada fecha antigua). Se pone a prueba en vivo: mira «Seguimiento» más abajo antes de poner dinero serio.</div>`;
     }
     h += `<label class="m-campo">¿Cuánto vas a invertir ahora en este paquete? ($)
@@ -193,6 +240,12 @@
     const otras = [].concat((P.vetadas || []).map((v) => `<li><strong>${esc(v.ticker)}</strong> (frenada): ${esc(v.motivo)}</li>`),
                             (P.en_espera || []).map((v) => `<li><strong>${esc(v.ticker)}</strong>: ${esc(v.motivo)}</li>`));
     if (otras.length) h += `<details class="m-det"><summary>Otras que cumplían los criterios (${otras.length})</summary><ul>${otras.join("")}</ul></details>`;
+    if (sel === "dividendos") {
+      h += tablaDividendos(inf.dividendos || {});
+      const d = inf.dividendos || {}, rd = d.resumen || {};
+      h += `<p class="m-nota">Universo: ${esc(d.fuente || "small caps")} · ${rd.n_universo ?? "—"} empresas · ${rd.n_pagan ?? "—"} pagan dividendo regular · ${rd.n_puerta_dividendo ?? "—"} cumplen la puerta del dividendo (≥5 años pagando, sin recortes) · ${rd.n_elegibles ?? "—"} elegibles tras revisar caja, deuda y dilución en la SEC.${d.descartes ? " Descartes más comunes: " + Object.entries(d.descartes).slice(0, 4).map(([k, v]) => esc(k) + " (" + v + ")").join(", ") + "." : ""}</p>`;
+      return `<section class="m-card">${h}</section>`;
+    }
     const r = inf.resumen || {};
     h += `<p class="m-nota">Universo de este mes: ${r.n_lista ?? "—"} empresas elegibles${r.n_tier_a != null ? ` (${r.n_tier_a} con análisis de IA favorable, ${r.n_tier_b} solo con cribado cuantitativo)` : ""}; ${r.n_con_senal ?? "—"} con 5 años de precios. Cumplen este paquete: ${P.n_aptas ?? "—"}.</p>`;
     return `<section class="m-card">${h}</section>`;
@@ -201,34 +254,35 @@
   function seccionSeguimiento() {
     const seg = informe && informe.seguimiento;
     let h = `<h2>¿Funcionan los paquetes? <span class="m-sub">seguimiento automático</span></h2>
-      <p class="m-dim">Cada mes la herramienta apunta qué habría elegido cada paquete y, con los meses, mide cuánto habría rendido frente al S&amp;P 500 y frente al resto del universo (todas las empresas elegibles a partes iguales). Es información pública de empresas: no usa tu cartera.</p>`;
+      <p class="m-dim">Cada mes la herramienta apunta qué habría elegido cada paquete y, con los meses, mide cuánto habría rendido frente al S&amp;P 500 (la sección de dividendos, frente al Russell 2000) y frente al resto del universo (todas las empresas elegibles a partes iguales). Es información pública de empresas: no usa tu cartera.</p>`;
     if (!seg || !(seg.cohortes || []).length) {
       h += `<p class="m-vacio">Aún no hay historial: la primera cifra aparece cuando haya un informe anterior con al menos unos días de recorrido, y es fiable de verdad a partir de 12-24 meses.</p>`;
       return `<section class="m-card">${h}</section>`;
     }
     const fila = (k) => {
-      const s = (seg.resumen || {})[k]; if (!s) return "";
-      if (!s.cohortes_maduras) return `<tr><td>${NOMBRE_PAQ[k]}</td><td colspan="3" class="m-dim">${s.cohortes} cohorte(s), aún sin 3 meses</td></tr>`;
+      const s = (seg.resumen || {})[k]; if (!s || !s.cohortes) return "";
+      const nom = k === "dividendos" ? "Dividendos <small class=\"m-dim\">vs Russell 2000</small>" : NOMBRE_PAQ[k];
+      if (!s.cohortes_maduras) return `<tr><td>${nom}</td><td colspan="3" class="m-dim">${s.cohortes} cohorte(s), aún sin 3 meses</td></tr>`;
       const cl = s.exceso_medio >= 0 ? "m-pos" : "m-neg";
-      return `<tr><td>${NOMBRE_PAQ[k]}</td><td class="num">${s.cohortes_maduras}</td>
+      return `<tr><td>${nom}</td><td class="num">${s.cohortes_maduras}</td>
         <td class="num"><span class="${cl}">${signo(s.exceso_medio * 100, 1)} pp</span></td>
         <td class="num">${s.superan_spy}/${s.cohortes_maduras}</td></tr>`;
     };
-    h += `<table class="m-tabla"><tr><th></th><th>Cohortes ≥3 m</th><th>Exceso vs S&amp;P</th><th>Superan</th></tr>${["corto", "medio", "largo"].map(fila).join("")}</table>`;
-    const conPool = ["corto", "medio", "largo"].filter((k) => seg.resumen && seg.resumen[k] && seg.resumen[k].exceso_medio_pool != null);
+    h += `<table class="m-tabla"><tr><th></th><th>Cohortes ≥3 m</th><th>Exceso vs referencia</th><th>Superan</th></tr>${PAQS_ORDEN.map(fila).join("")}</table>`;
+    const conPool = PAQS_ORDEN.filter((k) => seg.resumen && seg.resumen[k] && seg.resumen[k].exceso_medio_pool != null);
     if (conPool.length) {
       h += `<p class="m-dim">Frente al resto del universo: ${conPool.map((k) => `${NOMBRE_PAQ[k]} ${signo(seg.resumen[k].exceso_medio_pool * 100, 1)} pp`).join(" · ")}. Si los paquetes baten al S&amp;P pero no al resto del universo, lo que funciona es el filtro de calidad, no la selección.</p>`;
     }
-    const ta = ["corto", "medio", "largo"].map((k) => (seg.resumen || {})[k]).filter((s) => s && s.tier_a && s.tier_b);
+    const ta = PAQS_ORDEN.map((k) => (seg.resumen || {})[k]).filter((s) => s && s.tier_a && s.tier_b);
     if (ta.length) {
       const media = (t) => { let n = 0, sx = 0; ta.forEach((s) => { n += s[t].n; sx += s[t].rent_media * s[t].n; }); return n ? sx / n : null; };
       h += `<p class="m-dim">Rentabilidad media por empresa elegida: con análisis de IA ${signo(media("tier_a") * 100, 1)} % · solo con cribado ${signo(media("tier_b") * 100, 1)} % (así se verá con el tiempo si la IA aporta algo).</p>`;
     }
     const recientes = [...seg.cohortes].sort((a, b) => b.datos_a.localeCompare(a.datos_a) || a.paquete.localeCompare(b.paquete)).slice(0, 9);
     h += `<details class="m-det"><summary>Últimas cohortes (${seg.cohortes.length})</summary>
-      <table class="m-tabla"><tr><th>Mes · paquete</th><th>Días</th><th>Paquete</th><th>S&amp;P</th></tr>
+      <table class="m-tabla"><tr><th>Mes · paquete</th><th>Días</th><th>Paquete</th><th>Referencia</th></tr>
       ${recientes.map((c) => `<tr><td>${esc(c.mes)} · ${NOMBRE_PAQ[c.paquete] || esc(c.paquete)}${c.n_sin_precio ? ` <span class="m-dim">(${c.n_sin_precio} sin precio)</span>` : ""}</td>
-        <td class="num">${c.dias}</td><td class="num">${c.rent != null ? signo(c.rent * 100, 1) + " %" : "—"}</td><td class="num">${c.spy != null ? signo(c.spy * 100, 1) + " %" : "—"}</td></tr>`).join("")}</table></details>`;
+        <td class="num">${c.dias}</td><td class="num">${c.rent != null ? signo(c.rent * 100, 1) + " %" : "—"}</td><td class="num">${c.spy != null ? signo(c.spy * 100, 1) + " % <span class=\"m-dim\">" + (c.ref === "IWM" ? "R2000" : "S&amp;P") + "</span>" : "—"}</td></tr>`).join("")}</table></details>`;
     h += `<div class="m-aviso">${esc(seg.aviso || "")}</div>`;
     return `<section class="m-card">${h}</section>`;
   }
@@ -249,7 +303,7 @@
     calc.errores.forEach((e) => (h += `<div class="m-aviso">⚠️ ${esc(e)}</div>`));
     const porPaq = M.resumenPorPaquete(val.filas);
     if (Object.keys(porPaq).length > 1 || (Object.keys(porPaq).length === 1 && !porPaq.sin)) {
-      h += `<table class="m-tabla"><tr><th>Por paquete</th><th>Valor</th><th>Coste</th><th>Resultado</th></tr>${["corto", "medio", "largo", "sin"].filter((k) => porPaq[k]).map((k) => {
+      h += `<table class="m-tabla"><tr><th>Por paquete</th><th>Valor</th><th>Coste</th><th>Resultado</th></tr>${[...PAQS_ORDEN, "sin"].filter((k) => porPaq[k]).map((k) => {
         const o = porPaq[k], r = o.coste > 0 ? o.valor / o.coste - 1 : null;
         return `<tr><td>${k === "sin" ? "Sin paquete" : NOMBRE_PAQ[k]}</td><td class="num">${usd(o.valor, 0)}</td><td class="num">${usd(o.coste, 0)}</td><td class="num"><span class="${(r ?? 0) >= 0 ? "m-pos" : "m-neg"}">${r != null ? signo(r * 100, 1) + " %" : "—"}</span></td></tr>`;
       }).join("")}</table>`;
@@ -320,7 +374,7 @@
           <label>Fecha<input name="fecha" type="date" required value="${esc(p.fecha || M.hoyISO())}"></label>
         </div>
         <label>Paquete (opcional, para ver tu resultado por horizonte)
-          <select name="paq"><option value="">—</option>${["corto", "medio", "largo"].map((k) => `<option value="${k}" ${p.paq === k ? "selected" : ""}>${NOMBRE_PAQ[k]}</option>`).join("")}</select></label>
+          <select name="paq"><option value="">—</option>${PAQS_ORDEN.map((k) => `<option value="${k}" ${p.paq === k ? "selected" : ""}>${NOMBRE_PAQ[k]}</option>`).join("")}</select></label>
         <div id="m-form-msg"></div>
         <button class="m-btn m-btn-ppal" type="submit">Guardar operación</button>
       </form>`;
@@ -346,6 +400,7 @@
         <li><strong>Lo que SÍ está probado:</strong> solo la regla de precio del paquete de 1–3 años, y salió <em>sin ventaja demostrada</em> frente al S&amp;P 500 (el histórico está sesgado a favor y no distingue suerte de método). Vender por precio rindió peor que el índice, así que aquí no se manda vender por precio; se vende, si acaso, por tesis rota.</li>
         <li><strong>Lo que NO está probado:</strong> los paquetes de 3–5 y 5+ años usan criterios clásicos (rentabilidad del capital, crecimiento, caja, deuda, precio razonable), pero no se pueden comprobar en el pasado sin los datos financieros de cada fecha. Por eso hay un <em>seguimiento automático</em>: se apunta cada mes lo que habría elegido cada paquete y se compara con el S&amp;P 500 y con el resto del universo.</li>
         <li><strong>Estado:</strong> experimental. Los jueces son el seguimiento y tu marcador: dales 12-24 meses con importes que puedas permitirte, y si no superan al S&amp;P 500, quédate con el índice.</li>
+        <li><strong>Dividendos (small caps):</strong> sección aparte con empresas pequeñas que pagan dividendo y <em>no lo recortan</em> (el dinero por acción se mantiene o sube), con caja que lo cubre, poca deuda y sin diluir; las recompras suman. La rentabilidad anual es precio + dividendo y se compara con el Russell 2000. Tampoco está probada en el pasado (faltan las empresas que quebraron): el seguimiento la compara cada mes con el Russell 2000. Si una acción de este paquete que tienes recorta o deja de pagar el dividendo, la pestaña «Mi cartera» la marca como tesis rota. Tu cartera de aquí no suma los dividendos que cobres: llévalos aparte.</li>
         <li>La IA y los chequeos solo pueden quitar o avisar sobre una candidata, nunca añadirla. Las empresas «solo cribado» no tienen todavía análisis de IA de su tesis: léelas con más cautela.</li>
         <li>No incluye bancos ni aseguradoras en los paquetes de 3–5 y 5+ años (sus cuentas no se miden con estos ratios) ni empresas que no presenten cuentas en EE. UU. bajo US-GAAP.</li>
         <li>Información automática; no es asesoramiento financiero ni fiscal.</li>

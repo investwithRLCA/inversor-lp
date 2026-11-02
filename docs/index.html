@@ -380,6 +380,10 @@
   .m-tabla { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
   .m-tabla th, .m-tabla td { padding: 7px 6px; text-align: right; border-bottom: 1px solid var(--hairline); }
   .m-tabla th:first-child, .m-tabla td:first-child { text-align: left; }
+  .m-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 6px 0; }
+  .m-comp { min-width: 560px; }
+  .m-comp td:first-child, .m-comp th:first-child { position: sticky; left: 0; background: var(--ink-2); }
+  .m-ref td { color: var(--slate); font-style: italic; }
   .m-tabla th { font-size: 10.5px; color: var(--slate); text-transform: uppercase; letter-spacing: .05em; font-weight: 500; }
   .m-ops { list-style: none; padding: 0; margin: 0 0 8px; font-size: 13px; }
   .m-ops li { padding: 8px 0; border-bottom: 1px solid var(--hairline); line-height: 1.5; }
@@ -603,8 +607,8 @@ async function cargar() {
 
 cargar();
 </script>
-<script src="mensual.js?v=2"></script>
-<script src="mensual-ui.js?v=2"></script>
+<script src="mensual.js?v=3"></script>
+<script src="mensual-ui.js?v=3"></script>
 
 </body>
 </html>
