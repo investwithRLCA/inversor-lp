@@ -1,5 +1,6 @@
 """
-Prueba histórica del filtro Peter Lynch (lynch.py) con las cuentas «tal como se conocían».
+Prueba histórica de los filtros por tamaño (Peter Lynch, calidad del bot, «fórmula mágica»)
+con las cuentas «tal como se conocían».
 
 Pregunta: si cada fin de mes desde 2015 se hubieran comprado las empresas que pasan el
 filtro Lynch con lo que YA era público ese día, ¿habrían rendido más que el índice y que
@@ -14,9 +15,16 @@ Nasdaq-100 (docs/mercados.json), ~2.900. En cada fecha se separan por su tamaño
 primeros años: como el universo son las empresas de HOY, en 2015-2018 apenas había
 «pequeñas» y las «grandes» mezclaban medianas. Por eso el corte es por tamaño en dólares.)
 
-Variantes (fijadas antes de ver resultados):
-  · lynch: solo las reglas de Lynch (lynch.py) → las 15 con más puntos, máx. 3 por sector;
-  · lynch_cribado: además tienen que pasar el cribado de calidad del bot (quant_filter).
+Variantes (fijadas antes de ver resultados; todas: las 15 primeras, máx. 3 por sector):
+  · lynch: solo las reglas de Lynch (lynch.py), por puntos Lynch;
+  · lynch_cribado: además tienen que pasar el cribado de calidad del bot (quant_filter);
+  · calidad (nov-2026, 2ª tanda): solo el cribado de calidad del bot, por su nota (0-100);
+  · calidad_precio: pasan el cribado de calidad y se ordenan por lo baratas que están
+    (rentabilidad del beneficio = EBIT / valor de empresa, la inversa del EV/EBIT);
+  · magica: «fórmula mágica» de Joel Greenblatt (The Little Book That Beats the Market):
+    sin financieras, eléctricas ni inmobiliarias, ranking por ROIC + ranking por EBIT/valor de empresa.
+  Si en un grupo aprueban varias, se elige la de mayor exceso medio frente al índice a 24
+  meses (y se dice: elegir entre varias después de verlas infla un poco el resultado).
 
 Regla de decisión (fijada ANTES de ver resultados, la misma de los paquetes): una variante
 vale en un grupo solo si a 12 y a 24 meses su rentabilidad media supera AL ÍNDICE y A LA
@@ -50,9 +58,13 @@ from .pit import FuentePIT, factor_splits
 from .prueba_calidad import _bloques, fines_de_mes
 
 HORIZONTES = (12, 24, 36)
-VARIANTES = ("lynch", "lynch_cribado")
+VARIANTES = ("lynch", "lynch_cribado", "calidad", "calidad_precio", "magica")
 GRUPOS = ("grandes", "pequenas")
-NOMBRE_VAR = {"lynch": "Filtro Lynch", "lynch_cribado": "Filtro Lynch + cribado de calidad del bot"}
+NOMBRE_VAR = {"lynch": "Filtro Lynch", "lynch_cribado": "Filtro Lynch + cribado de calidad del bot",
+              "calidad": "Cribado de calidad del bot (por nota)",
+              "calidad_precio": "Cribado de calidad + más baratas (EBIT/valor de empresa)",
+              "magica": "Fórmula mágica de Greenblatt (ROIC + EBIT/valor de empresa)"}
+SECTORES_FUERA_MAGICA = ("Financials", "Utilities", "Real Estate")
 NOMBRE_GRUPO = {"grandes": "Grandes (> 5.000 M$)", "pequenas": "Pequeñas (300–5.000 M$)"}
 BENCH = {"grandes": "SPY", "pequenas": "IWM"}
 NOMBRE_BENCH = {"grandes": "S&P 500", "pequenas": "Russell 2000"}
@@ -131,14 +143,25 @@ def calcular(adj: pd.DataFrame, pit: FuentePIT, sectores: dict[str, str], inicio
 
         pts = {v: np.full(len(cols), np.nan) for v in VARIANTES}
         cat = {}
+        roic = np.full(len(cols), np.nan)
+        ey = np.full(len(cols), np.nan)          # rentabilidad del beneficio: EBIT / valor de empresa, %
         for k in np.where(validas)[0]:
             f = res_l[int(k)]
+            sr = screen(f)
+            m = sr.metrics
+            if sr.passed:
+                pts["calidad"][k] = sr.score
+                if m.ev_ebit and m.ev_ebit > 0:
+                    pts["calidad_precio"][k] = 100.0 / m.ev_ebit
+            if (not f.is_financial and sectores.get(cols[int(k)], "") not in SECTORES_FUERA_MAGICA
+                    and m.roic is not None and m.ev_ebit and m.ev_ebit > 0):
+                roic[k], ey[k] = m.roic, 100.0 / m.ev_ebit
             rl = evaluar_lynch(f, reglas)
             if not rl.pasa:
                 continue
             pts["lynch"][k] = rl.puntos
             cat[int(k)] = rl.categoria
-            if screen(f).passed:
+            if sr.passed:
                 pts["lynch_cribado"][k] = rl.puntos
 
         retornos, rbench = {}, {}
@@ -167,8 +190,16 @@ def calcular(adj: pd.DataFrame, pit: FuentePIT, sectores: dict[str, str], inicio
                     fr["hunde_base"] = float((rr <= -0.5).mean())
             ref.append(fr)
             ngr.append({"fecha": fecha, "grupo": g, "n": int(en.sum()),
-                        **{f"n_{v}": int((en & np.isfinite(pts[v])).sum()) for v in VARIANTES}})
+                        **{f"n_{v}": int((en & np.isfinite(pts[v])).sum()) for v in VARIANTES if v != "magica"},
+                        "n_magica": int((en & np.isfinite(roic) & np.isfinite(ey)).sum())})
 
+            # fórmula mágica: ranking de ROIC + ranking de EBIT/valor de empresa DENTRO del grupo
+            ok_m = en & np.isfinite(roic) & np.isfinite(ey)
+            if ok_m.any():
+                idx_m = np.where(ok_m)[0]
+                r_roic = pd.Series(roic[idx_m]).rank(ascending=False).to_numpy()
+                r_ey = pd.Series(ey[idx_m]).rank(ascending=False).to_numpy()
+                pts["magica"][idx_m] = -(r_roic + r_ey)
             for v in VARIANTES:
                 p = np.where(en & np.isfinite(pts[v]), pts[v], np.nan)
                 orden = np.argsort(-np.where(np.isfinite(p), p, -1e9), kind="stable")
@@ -324,8 +355,8 @@ def _r(x):
 def informe_md(res: Resultado, desde: str, n_univ: int, n_sec: int) -> str:
     L: list[str] = []
     A = L.append
-    A("# ¿Habría batido al mercado el filtro Peter Lynch?\n")
-    A("Prueba con las cuentas **tal como se conocían en cada fecha** (SEC) y el mismo código del bot (`lynch.py`). "
+    A("# ¿Qué filtro bate al mercado en cada tamaño de empresa?\n")
+    A("Prueba con las cuentas **tal como se conocían en cada fecha** (SEC) y el mismo código del bot (`lynch.py`, `quant_filter.py`). "
       f"Cada fin de mes desde {desde[:7]} se eligen las {N_ELEGIDAS} con más puntos (máx. {MAX_SECTOR} por sector) y se "
       "mantienen 12, 24 o 36 meses. Rentabilidades totales **brutas** (dividendos incluidos; sin impuestos ni comisiones).\n")
     A(f"Universo: empresas que hoy están en el S&P 500, S&P 400, S&P 600, Russell 2000 o Nasdaq-100 ({n_univ}; {n_sec} con "
@@ -337,7 +368,8 @@ def informe_md(res: Resultado, desde: str, n_univ: int, n_sec: int) -> str:
     if not res.n_grupo.empty:
         ng = res.n_grupo.groupby("grupo").median(numeric_only=True)
         A("Empresas por fecha (mediana): " + " · ".join(
-            f"{NOMBRE_GRUPO[g]}: {ng.loc[g, 'n']:.0f}, pasan Lynch {ng.loc[g, 'n_lynch']:.0f}, Lynch + cribado {ng.loc[g, 'n_lynch_cribado']:.0f}"
+            f"{NOMBRE_GRUPO[g]}: {ng.loc[g, 'n']:.0f}, pasan Lynch {ng.loc[g, 'n_lynch']:.0f}, Lynch + cribado {ng.loc[g, 'n_lynch_cribado']:.0f}, "
+            f"pasan el cribado {ng.loc[g, 'n_calidad']:.0f}"
             for g in GRUPOS if g in ng.index) + "\n")
 
     decs = {(v, g): decidir(res, v, g) for v in VARIANTES for g in GRUPOS}
@@ -348,6 +380,17 @@ def informe_md(res: Resultado, desde: str, n_univ: int, n_sec: int) -> str:
         et = {"mantener": "✅ aprueba (en prueba)", "quitar": "❌ suspende", "sin_datos": "❔ sin datos suficientes"}[d["veredicto"]]
         A(f"| {NOMBRE_VAR[v]} | {NOMBRE_GRUPO[g]} | {et} | "
           f"{'supera al índice y al grupo a 12 y 24 meses' if d['veredicto'] == 'mantener' else '; '.join(d['motivos'])} |")
+    A("")
+    elec = elegir(res)
+    A("## Elección por grupo\n")
+    A("Entre las que aprueban, la de mayor exceso medio frente al índice a 24 meses (elegir entre varias después de verlas "
+      "infla un poco el resultado: el seguimiento en vivo es el juez).\n")
+    for g in GRUPOS:
+        e = elec.get(g)
+        if e:
+            A(f"- **{NOMBRE_GRUPO[g]}:** {NOMBRE_VAR[e['variante']]} ({e['ex_bench'] * 100:+.1f} pp frente al {NOMBRE_BENCH[g]} a 24 meses).")
+        else:
+            A(f"- **{NOMBRE_GRUPO[g]}:** ninguna aprueba. Lo mejor que dice la prueba para este tamaño es el propio índice ({NOMBRE_BENCH[g]}).")
     A("")
     A("## ¿Cuántas veces acierta? (lo que decía Lynch)\n")
     A("«Si eres bueno, aciertas seis veces de cada diez» — y unas pocas muy buenas compensan las que fallan. Aquí, empresa a empresa: "
@@ -400,12 +443,28 @@ def informe_md(res: Resultado, desde: str, n_univ: int, n_sec: int) -> str:
     return "\n".join(L)
 
 
+def elegir(res: Resultado) -> dict[str, dict]:
+    """Por grupo: la variante que aprueba con mayor exceso medio frente al índice a 24 meses."""
+    out: dict[str, dict] = {}
+    for g in GRUPOS:
+        mejores = []
+        for v in VARIANTES:
+            d = decidir(res, v, g)
+            s = (d["stats"] or {}).get(24)
+            if d["veredicto"] == "mantener" and s and not s.get("insuficiente"):
+                mejores.append({"variante": v, "ex_bench": s["ex_bench"], "ex_todas": s["ex_todas"]})
+        if mejores:
+            out[g] = max(mejores, key=lambda x: x["ex_bench"])
+    return out
+
+
 def decisiones_json(res: Resultado) -> dict:
     out = {}
     for v in VARIANTES:
         for g in GRUPOS:
             d = decidir(res, v, g)
             out[f"{v}:{g}"] = {"veredicto": d["veredicto"], "motivos": d["motivos"]}
+    out["eleccion"] = {g: e["variante"] for g, e in elegir(res).items()}
     return out
 
 
