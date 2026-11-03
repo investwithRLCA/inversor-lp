@@ -177,19 +177,24 @@ def lote_de_errores(repo: Repo, patron: str, tamaño: int) -> list[dict]:
     """Empresas que fallaron con un error de datos que contiene `patron` (p. ej. tras
     arreglar cómo se leen esos datos): se vuelven a intentar ya, sin esperar a la ronda."""
     campos = "ticker, cik, nombre, veces_intentado, ultimo_intento"
-    res = (
-        repo.db.table("universe_progreso")
-        .select(campos)
-        .eq("ultimo_screening_ok", False)
-        .ilike("ultimo_error", f"%{patron}%")
-        .order("ultimo_intento", desc=False)
-        .limit(tamaño)
-        .execute()
-    )
-    lote = res.data or []
+    todas: list[dict] = []
+    for desde in range(0, 20_000, 1000):                           # todas las que tienen ese error…
+        trozo = (
+            repo.db.table("universe_progreso")
+            .select(campos)
+            .eq("ultimo_screening_ok", False)
+            .ilike("ultimo_error", f"%{patron}%")
+            .order("ultimo_intento", desc=False)
+            .range(desde, desde + 999)
+            .execute()
+        ).data or []
+        todas += trozo
+        if len(trozo) < 1000:
+            break
     prioridad = set(tickers_prioritarios())
-    lote.sort(key=lambda f: f["ticker"] not in prioridad)          # primero las de índices
-    print(f"Lote de reintento («{patron}»): {len(lote)} tickers "
+    todas.sort(key=lambda f: f["ticker"] not in prioridad)         # …primero las de índices (orden estable)
+    lote = todas[:tamaño]
+    print(f"Lote de reintento («{patron}»): {len(todas)} con ese error; se reintentan {len(lote)} "
           f"({sum(1 for f in lote if f['ticker'] in prioridad)} de índices).")
     return lote
 
