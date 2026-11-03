@@ -56,7 +56,35 @@ def lista_supabase() -> list[str]:
     return sorted({f["ticker"] for f in filas if f["ticker"] in indices})
 
 
+def verificar(tickers: list[str]) -> None:
+    """Pasa cada empresa por el proveedor real (el que usa el bot) y dice qué sale."""
+    from providers import PREDECESORAS, SecEdgarProvider as Sec
+    sec = Sec()
+    for t, cik in PREDECESORAS.items():
+        try:
+            print(f"Predecesora de {t}: CIK {cik} = {sec._get(f'{sec.BASE}/api/xbrl/companyfacts/CIK{cik}.json').get('entityName')}")
+        except Exception as e:  # noqa: BLE001
+            print(f"Predecesora de {t}: CIK {cik} ERROR {e}")
+    clases = collections.Counter()
+    for t in tickers:
+        try:
+            f = sec.fetch(t)
+            clases["ok"] += 1
+            print(f"{t:6} OK  ingresos {f.fiscal_years[0]}-{f.fiscal_years[-1]}: "
+                  + " · ".join(f"{x:,.0f}" for x in f.revenue) + f" M  (cifras del {f.as_of}){' financiera' if f.is_financial else ''}")
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            clase = ("sin ventas" if "no publica ingresos" in msg else "sin 10-K" if "aún no tiene cuentas" in msg
+                     else "IFRS" if "IFRS" in msg else "otro")
+            clases[clase] += 1
+            print(f"{t:6} --  {clase}: {msg[:110]}")
+    print("\nResumen verificación:", dict(clases))
+
+
 def main() -> None:
+    if sys.argv[1:2] == ["--verificar"]:
+        verificar(sys.argv[2:])
+        return
     tickers = sys.argv[1:] or lista_supabase()
     print(f"Empresas a revisar: {len(tickers)}")
     sec = SecEdgarProvider()

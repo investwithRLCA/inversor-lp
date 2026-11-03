@@ -191,6 +191,82 @@ BALANCE_CONCEPTS: dict[str, list[str]] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Ingresos de empresas que no usan las etiquetas habituales
+# --------------------------------------------------------------------------- #
+
+# Etiquetas de ingresos propias de un sector (por el prefijo de su código SIC). Van DETRÁS
+# de las habituales: solo cuentan en los años en que la empresa no publica estas.
+INGRESOS_SECTOR: tuple[tuple[tuple[str, ...], list[str]], ...] = (
+    (("49",), ["RegulatedAndUnregulatedOperatingRevenue", "ElectricUtilityRevenue"]),       # eléctricas y gas
+    (("65", "67"), ["OperatingLeaseLeaseIncome", "RealEstateRevenueNet",                     # inmobiliarias / REIT
+                    "OperatingLeasesIncomeStatementLeaseRevenue"]),
+    (("60", "61", "62", "63", "64", "65", "67"), ["RevenuesNetOfInterestExpense"]),         # bancos de inversión, brókeres
+)
+TODAS_ETIQUETAS_INGRESOS: list[str] = list(dict.fromkeys(
+    CONCEPTS["revenue"] + [t for _, tags in INGRESOS_SECTOR for t in tags]))
+
+# Bancos, financieras de crédito y REIT hipotecarios no publican «ventas»: sus ingresos
+# son el margen de intereses (intereses cobrados − pagados) + los ingresos por comisiones
+# y otros (no financieros). Es la cifra que dan como «total revenue».
+SIC_BANCA = ("60", "61", "62", "63", "64", "65", "67")
+BANK_CONCEPTS: dict[str, list[str]] = {
+    "nii": ["InterestIncomeExpenseNet"],
+    "interest_income": ["InterestAndDividendIncomeOperating", "InterestIncomeOperating"],
+    "interest_expense": ["InterestExpenseOperating", "InterestExpense"],
+    "noninterest_income": ["NoninterestIncome"],
+}
+
+# Empresas que cambiaron de CIK en una reorganización (una sociedad nueva sucede a la
+# anterior: formulario 8-K12B). La historia de cuentas está en el CIK antiguo.
+PREDECESORAS: dict[str, str] = {
+    "XOM": "0000034088",     # Exxon Mobil Corp → ExxonMobil Holdings Corp (traslado a Texas, jul-2026)
+    "NAVI": "0001593538",    # Navient Corp → Navient Holdings
+    "DMRC": "0001438231",    # Digimarc Corp → nueva Digimarc Corp
+    "XPRO": "0001575828",    # Expro Group Holdings N.V. → Expro Ltd
+}
+
+
+def etiquetas_ingresos(sic: str) -> list[str]:
+    """Etiquetas de ingresos por orden de preferencia para una empresa de ese SIC."""
+    tags = list(CONCEPTS["revenue"])
+    for prefijos, extra in INGRESOS_SECTOR:
+        if str(sic or "").startswith(prefijos):
+            tags += [t for t in extra if t not in tags]
+    return tags
+
+
+def ingresos_banca(nii: dict, interes_cobrado: dict, interes_pagado: dict, otros: dict) -> dict:
+    """Ingresos de un banco por periodo (las claves pueden ser años o fechas de cierre):
+    margen de intereses + ingresos no financieros. Si no publica el margen, se calcula
+    como intereses cobrados − pagados."""
+    margen = dict(nii)
+    for k, v in interes_cobrado.items():
+        if k not in margen and k in interes_pagado:
+            margen[k] = v - abs(interes_pagado[k])
+    if not margen:
+        return {}
+    if otros and max(otros) >= max(margen):
+        return {k: v + otros[k] for k, v in margen.items() if k in otros}
+    return margen
+
+
+def fusionar_facts(principal: dict, previo: dict) -> dict:
+    """companyfacts de una empresa sucesora + los de su predecesora (misma estructura)."""
+    out = {k: v for k, v in principal.items() if k != "facts"}
+    out["facts"] = {}
+    fa, fb = previo.get("facts") or {}, principal.get("facts") or {}
+    for tax in set(fa) | set(fb):
+        a, b = fa.get(tax) or {}, fb.get(tax) or {}
+        mezcla = {}
+        for tag in set(a) | set(b):
+            na, nb = a.get(tag) or {}, b.get(tag) or {}
+            ua, ub = na.get("units") or {}, nb.get("units") or {}
+            mezcla[tag] = {**na, **nb, "units": {u: list(ua.get(u, [])) + list(ub.get(u, [])) for u in set(ua) | set(ub)}}
+        out["facts"][tax] = mezcla
+    return out
+
+
 class SecEdgarProvider:
     """Lee directamente la API XBRL de la SEC. Sin API key, sin librerías extra.
 
@@ -249,6 +325,18 @@ class SecEdgarProvider:
             raise ValueError(f"Ticker no encontrado en EDGAR: {ticker}")
         return entry["cik"], entry["name"]
 
+    def companyfacts(self, ticker: str, cik: str) -> dict:
+        """companyfacts del CIK; si la empresa es sucesora de otra (ver PREDECESORAS),
+        se le suman los de la anterior, que es donde está su historia."""
+        facts = self._get(f"{self.BASE}/api/xbrl/companyfacts/CIK{cik}.json")
+        previo = PREDECESORAS.get(ticker.upper())
+        if previo and previo.lstrip("0") != str(cik).lstrip("0"):
+            try:
+                facts = fusionar_facts(facts, self._get(f"{self.BASE}/api/xbrl/companyfacts/CIK{previo}.json"))
+            except Exception as e:  # noqa: BLE001
+                log.warning("%s: no se pudieron leer las cuentas de su predecesora (%s)", ticker, e)
+        return facts
+
     def full_ticker_list(self) -> dict[str, dict]:
         """El listado COMPLETO que conoce la SEC (unas 10.000 entradas, no solo
         el S&P 500). Es la puerta de entrada para analizar más allá de una
@@ -294,6 +382,29 @@ class SecEdgarProvider:
                 return {fy: out[fy][1] for fy in keep}
         return {}
 
+    @classmethod
+    def _serie_fusionada(cls, facts: dict, tags: list[str], years: int) -> dict[int, float]:
+        """Como `_annual_series`, pero año a año: cada año sale de la primera etiqueta
+        (por orden de preferencia) que lo tenga. Así una etiqueta que la empresa dejó de
+        usar no deja la serie anclada en años viejos."""
+        out: dict[int, float] = {}
+        for tag in tags:
+            for fy, v in cls._annual_series(facts, [tag], 10_000, "flow").items():
+                out.setdefault(fy, v)
+        return {fy: out[fy] for fy in sorted(out)[-years:]}
+
+    def _ingresos(self, facts: dict, sic: str) -> tuple[dict[int, float], list[str]]:
+        """Serie anual de ingresos y etiquetas usadas (para fechar la presentación)."""
+        tags = etiquetas_ingresos(sic)
+        rev = self._serie_fusionada(facts, tags, self.years)
+        if str(sic or "").startswith(SIC_BANCA):
+            b = {k: self._serie_fusionada(facts, t, 10_000) for k, t in BANK_CONCEPTS.items()}
+            banca = ingresos_banca(b["nii"], b["interest_income"], b["interest_expense"], b["noninterest_income"])
+            if banca and (not rev or max(banca) > max(rev)):
+                return ({fy: banca[fy] for fy in sorted(banca)[-self.years:]},
+                        BANK_CONCEPTS["nii"] + BANK_CONCEPTS["interest_income"])
+        return rev, tags
+
     @staticmethod
     def _fecha_presentacion(facts: dict, tags: list[str], fy_objetivo: int) -> str | None:
         """Fecha ('filed') del 10-K/20-F que contiene el ejercicio fiscal
@@ -327,7 +438,7 @@ class SecEdgarProvider:
 
     def fetch(self, ticker: str) -> Fundamentals:
         cik, name = self.resolve_cik(ticker)
-        facts = self._get(f"{self.BASE}/api/xbrl/companyfacts/CIK{cik}.json")
+        facts = self.companyfacts(ticker, cik)
         submissions = self._get(f"{self.BASE}/submissions/CIK{cik}.json")
 
         sic = str(submissions.get("sic", ""))
@@ -335,6 +446,7 @@ class SecEdgarProvider:
 
         flows = {k: self._annual_series(facts, tags, self.years, "flow")
                  for k, tags in CONCEPTS.items()}
+        flows["revenue"], tags_ingresos = self._ingresos(facts, sic)
         stocks = {k: self._annual_series(facts, tags, self.years, "stock")
                   for k, tags in BALANCE_CONCEPTS.items()}
 
@@ -348,7 +460,11 @@ class SecEdgarProvider:
                     f"{ticker}: informa bajo IFRS (emisor extranjero, probablemente 20-F), "
                     "no US-GAAP — no soportado todavía, ver limitaciones en el README"
                 )
-            raise ValueError(f"{ticker}: EDGAR no devuelve serie de ingresos utilizable")
+            if flows.get("net_income"):
+                raise ValueError(f"{ticker}: no publica ingresos en la SEC (empresa sin ventas todavía, "
+                                 "p. ej. biotecnológica en fase clínica o minera en desarrollo)")
+            raise ValueError(f"{ticker}: aún no tiene cuentas anuales (10-K) en la SEC "
+                             "(recién salida a bolsa, escindida o reorganizada)")
 
         def serie(key: str, scale: float = M) -> list[float]:
             src = flows.get(key, {})
@@ -363,7 +479,7 @@ class SecEdgarProvider:
         debt = (last("long_term_debt") or 0.0) + (last("short_term_debt") or 0.0)
         cash = (last("cash") or 0.0) + (last("short_term_investments") or 0.0)
 
-        fecha_cifras = self._fecha_presentacion(facts, CONCEPTS["revenue"], fys[-1])
+        fecha_cifras = self._fecha_presentacion(facts, tags_ingresos, fys[-1])
         as_of = (
             date.fromisoformat(fecha_cifras) if fecha_cifras
             else date.fromisoformat(submissions.get("filings", {})

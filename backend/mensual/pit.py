@@ -33,12 +33,14 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
-from providers import BALANCE_CONCEPTS, CONCEPTS, M, Fundamentals, SecEdgarProvider
+from providers import (BALANCE_CONCEPTS, BANK_CONCEPTS, CONCEPTS, M, SIC_BANCA, TODAS_ETIQUETAS_INGRESOS,
+                       Fundamentals, SecEdgarProvider, etiquetas_ingresos, ingresos_banca)
 
 log = logging.getLogger(__name__)
 
 FORMULARIOS = ("10-K", "10-K/A", "20-F")
-VERSION_CACHE = 2              # 2: añade el inventario (filtro Lynch); el nombre del fichero lleva la versión
+VERSION_CACHE = 3              # 2: inventario (Lynch) · 3: ingresos de bancos, REIT, eléctricas y sucesoras
+                               # (el nombre del fichero lleva la versión)
 MAX_EDAD_BALANCE_DIAS = 450      # un dato de balance más viejo que esto frente a las ventas se ignora
 MAX_EDAD_CUENTAS_DIAS = 640      # si las últimas cuentas publicadas tienen > ~21 meses, la empresa no cuenta
 
@@ -57,7 +59,10 @@ def compactar(facts: dict) -> dict:
     sin red."""
     gaap = (facts or {}).get("facts", {}).get("us-gaap", {})
     out: dict[str, dict[str, list]] = {}
-    for grupo, tags in list(CONCEPTS.items()) + list(BALANCE_CONCEPTS.items()):
+    grupos = dict(CONCEPTS)
+    grupos["revenue"] = TODAS_ETIQUETAS_INGRESOS            # también las de sector (se eligen por SIC al usarlas)
+    grupos.update({"banca_" + k: v for k, v in BANK_CONCEPTS.items()})
+    for grupo, tags in list(grupos.items()) + list(BALANCE_CONCEPTS.items()):
         es_balance = grupo in BALANCE_CONCEPTS
         por_tag: dict[str, list] = {}
         for tag in tags:
@@ -190,7 +195,7 @@ class FuentePIT:
         def uno(t: str, prov: SecEdgarProvider):
             try:
                 cik, nombre = prov.resolve_cik(t)
-                facts = prov._get(f"{prov.BASE}/api/xbrl/companyfacts/CIK{cik}.json")
+                facts = prov.companyfacts(t, cik)
                 try:
                     sic = str(prov._get(f"{prov.BASE}/submissions/CIK{cik}.json").get("sic", ""))
                 except Exception:        # noqa: BLE001  (el SIC es secundario)
@@ -276,7 +281,14 @@ class FuentePIT:
         conc = d["conceptos"]
         flujos = {k: _serie_en(conc.get(k, {}), CONCEPTS[k], corte) for k in CONCEPTS}
         saldos = {k: _serie_en(conc.get(k, {}), BALANCE_CONCEPTS[k], corte) for k in BALANCE_CONCEPTS}
-        ingresos = flujos["revenue"]
+        sic = str(d.get("sic") or "")
+        ingresos = _serie_en(conc.get("revenue", {}), etiquetas_ingresos(sic), corte)
+        if sic.startswith(SIC_BANCA):
+            b = {k: _serie_en(conc.get("banca_" + k, {}), t, corte) for k, t in BANK_CONCEPTS.items()}
+            banca = ingresos_banca(b["nii"], b["interest_income"], b["interest_expense"], b["noninterest_income"])
+            if banca and (not ingresos or max(banca) > max(ingresos)):
+                ingresos = banca
+        flujos["revenue"] = ingresos
         if not ingresos:
             return None
         n = self.anios

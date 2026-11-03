@@ -12,6 +12,11 @@ on:
         type: string
         required: false
         default: ""
+      verificar:
+        description: "Pasarlas por el proveedor del bot (comprobar el arreglo)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -35,4 +40,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           TICKERS: ${{ github.event.inputs.tickers }}
-        run: python -W ignore diag_ingresos.py $TICKERS
+          VERIFICAR: ${{ github.event.inputs.verificar }}
+        run: |
+          if [ "$VERIFICAR" = "true" ]; then python -W ignore diag_ingresos.py --verificar $TICKERS
+          else python -W ignore diag_ingresos.py $TICKERS; fi
