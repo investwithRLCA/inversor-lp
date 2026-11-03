@@ -39,6 +39,11 @@ on:
         type: boolean
         required: false
         default: false
+      reintentar:
+        description: "Reintentar solo las que fallaron con un error que contenga este texto (vacío = lote normal)"
+        type: string
+        required: false
+        default: ""
 
 concurrency:
   group: barrido
@@ -75,6 +80,7 @@ jobs:
           ${{ (github.event.inputs.solo_cribado == 'true') && '--solo-cribado' || '' }}
           --ronda-dias ${{ github.event.inputs.ronda_dias || '45' }}
           ${{ (github.event.inputs.solo_estado == 'true') && '--estado' || '' }}
+          ${{ github.event.inputs.reintentar && format('--reintentar "{0}"', github.event.inputs.reintentar) || '' }}
 
       # GitHub dispara muy pocas ejecuciones programadas en este repositorio (a veces
       # una al día) y refresco.yml casi nunca salta solo: por eso cada barrido refresca

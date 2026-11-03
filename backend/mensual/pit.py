@@ -34,7 +34,8 @@ from datetime import date
 from pathlib import Path
 
 from providers import (BALANCE_CONCEPTS, BANK_CONCEPTS, CONCEPTS, M, SIC_BANCA, TODAS_ETIQUETAS_INGRESOS,
-                       Fundamentals, SecEdgarProvider, etiquetas_ingresos, ingresos_banca)
+                       Fundamentals, SecEdgarProvider, etiquetas_ingresos, fusionar_ingresos, ingresos_banca,
+                       usar_ingresos_banca)
 
 log = logging.getLogger(__name__)
 
@@ -282,11 +283,12 @@ class FuentePIT:
         flujos = {k: _serie_en(conc.get(k, {}), CONCEPTS[k], corte) for k in CONCEPTS}
         saldos = {k: _serie_en(conc.get(k, {}), BALANCE_CONCEPTS[k], corte) for k in BALANCE_CONCEPTS}
         sic = str(d.get("sic") or "")
-        ingresos = _serie_en(conc.get("revenue", {}), etiquetas_ingresos(sic), corte)
+        tags = etiquetas_ingresos(sic)
+        ingresos = fusionar_ingresos({t: _serie_en(conc.get("revenue", {}), [t], corte) for t in tags}, tags)
         if sic.startswith(SIC_BANCA):
             b = {k: _serie_en(conc.get("banca_" + k, {}), t, corte) for k, t in BANK_CONCEPTS.items()}
             banca = ingresos_banca(b["nii"], b["interest_income"], b["interest_expense"], b["noninterest_income"])
-            if banca and (not ingresos or max(banca) > max(ingresos)):
+            if usar_ingresos_banca(ingresos, banca, flujos.get("net_income") or {}):
                 ingresos = banca
         flujos["revenue"] = ingresos
         if not ingresos:

@@ -173,6 +173,27 @@ def siguiente_lote(repo: Repo, tamaño: int, ronda_dias: int = RONDA_INDICES_DIA
     return lote
 
 
+def lote_de_errores(repo: Repo, patron: str, tamaño: int) -> list[dict]:
+    """Empresas que fallaron con un error de datos que contiene `patron` (p. ej. tras
+    arreglar cómo se leen esos datos): se vuelven a intentar ya, sin esperar a la ronda."""
+    campos = "ticker, cik, nombre, veces_intentado, ultimo_intento"
+    res = (
+        repo.db.table("universe_progreso")
+        .select(campos)
+        .eq("ultimo_screening_ok", False)
+        .ilike("ultimo_error", f"%{patron}%")
+        .order("ultimo_intento", desc=False)
+        .limit(tamaño)
+        .execute()
+    )
+    lote = res.data or []
+    prioridad = set(tickers_prioritarios())
+    lote.sort(key=lambda f: f["ticker"] not in prioridad)          # primero las de índices
+    print(f"Lote de reintento («{patron}»): {len(lote)} tickers "
+          f"({sum(1 for f in lote if f['ticker'] in prioridad)} de índices).")
+    return lote
+
+
 def cola_pendiente_ia(repo: Repo, n: int) -> list[dict]:
     """Empresas que pasaron el cribado en ejecuciones anteriores y siguen sin IA."""
     if n <= 0:
@@ -248,6 +269,8 @@ def main() -> None:
     ap.add_argument("--estado", action="store_true", help="solo muestra cómo va el barrido")
     ap.add_argument("--ronda-dias", type=int, default=RONDA_INDICES_DIAS,
                      help="repasar las empresas de índice vistas hace más de N días (0 = todas otra vez)")
+    ap.add_argument("--reintentar", default="",
+                     help="en vez del lote normal, reintentar las que fallaron con un error que contenga este texto")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -264,7 +287,13 @@ def main() -> None:
         estado(repo)
         return
 
-    lote = siguiente_lote(repo, args.lote, args.ronda_dias)
+    if args.reintentar:
+        lote = lote_de_errores(repo, args.reintentar, args.lote)
+        if not lote:
+            print("No hay empresas con ese error: nada que reintentar.")
+            return
+    else:
+        lote = siguiente_lote(repo, args.lote, args.ronda_dias)
     if not lote:
         print("universe_progreso está vacío. Ejecuta primero: python run_universo.py --sembrar")
         return

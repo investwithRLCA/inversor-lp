@@ -202,6 +202,7 @@ INGRESOS_SECTOR: tuple[tuple[tuple[str, ...], list[str]], ...] = (
     (("65", "67"), ["OperatingLeaseLeaseIncome", "RealEstateRevenueNet",                     # inmobiliarias / REIT
                     "OperatingLeasesIncomeStatementLeaseRevenue"]),
     (("60", "61", "62", "63", "64", "65", "67"), ["RevenuesNetOfInterestExpense"]),         # bancos de inversión, brókeres
+    (("62",), ["InvestmentBankingRevenue"]),                                                # boutiques de banca de inversión
 )
 TODAS_ETIQUETAS_INGRESOS: list[str] = list(dict.fromkeys(
     CONCEPTS["revenue"] + [t for _, tags in INGRESOS_SECTOR for t in tags]))
@@ -211,7 +212,7 @@ TODAS_ETIQUETAS_INGRESOS: list[str] = list(dict.fromkeys(
 # y otros (no financieros). Es la cifra que dan como «total revenue».
 SIC_BANCA = ("60", "61", "62", "63", "64", "65", "67")
 BANK_CONCEPTS: dict[str, list[str]] = {
-    "nii": ["InterestIncomeExpenseNet"],
+    "nii": ["InterestRevenueExpenseNet", "InterestIncomeExpenseNet"],     # la primera es el nombre nuevo (taxonomía 2024)
     "interest_income": ["InterestAndDividendIncomeOperating", "InterestIncomeOperating"],
     "interest_expense": ["InterestExpenseOperating", "InterestExpense"],
     "noninterest_income": ["NoninterestIncome"],
@@ -234,6 +235,49 @@ def etiquetas_ingresos(sic: str) -> list[str]:
         if str(sic or "").startswith(prefijos):
             tags += [t for t in extra if t not in tags]
     return tags
+
+
+# «Ingresos de contratos con clientes» es a veces solo una parte de los ingresos (en una
+# aseguradora, las comisiones; las primas van aparte). Si el total («Revenues») es claramente
+# mayor, manda el total.
+COMPONENTES_INGRESOS = ("RevenueFromContractWithCustomerExcludingAssessedTax",
+                        "RevenueFromContractWithCustomerIncludingAssessedTax")
+
+
+def _anio(k) -> int:
+    return k if isinstance(k, int) else int(str(k)[:4])
+
+
+def fusionar_ingresos(por_tag: dict[str, dict], orden: list[str]) -> dict:
+    """Ingresos periodo a periodo: la primera etiqueta (por orden) que tenga ese periodo,
+    salvo que sea la de contratos con clientes y el total sea > 25 % mayor."""
+    out = {}
+    for k in sorted({k for serie in por_tag.values() for k in serie}):
+        for tag in orden:
+            v = (por_tag.get(tag) or {}).get(k)
+            if v is None:
+                continue
+            if tag in COMPONENTES_INGRESOS:
+                total = (por_tag.get("Revenues") or {}).get(k)
+                if total is not None and v > 0 and total > 1.25 * v:
+                    v = total
+            out[k] = v
+            break
+    return out
+
+
+def usar_ingresos_banca(rev: dict, banca: dict, beneficio: dict) -> bool:
+    """¿Sustituye el cálculo bancario (margen de intereses + no financieros) a lo publicado
+    como ingresos? Sí si no hay ingresos, si llega a un año más reciente o si lo publicado
+    era claramente solo una parte (comisiones). Nunca con una serie que se quedó vieja."""
+    if not banca:
+        return False
+    if beneficio and _anio(max(banca)) < _anio(max(beneficio)) - 1:
+        return False
+    if not rev or _anio(max(banca)) > _anio(max(rev)):
+        return True
+    k = max(rev)
+    return k in banca and rev[k] > 0 and banca[k] > 1.25 * rev[k]
 
 
 def ingresos_banca(nii: dict, interes_cobrado: dict, interes_pagado: dict, otros: dict) -> dict:
@@ -393,17 +437,16 @@ class SecEdgarProvider:
                 out.setdefault(fy, v)
         return {fy: out[fy] for fy in sorted(out)[-years:]}
 
-    def _ingresos(self, facts: dict, sic: str) -> tuple[dict[int, float], list[str]]:
+    def _ingresos(self, facts: dict, sic: str, beneficio: dict) -> tuple[dict[int, float], list[str]]:
         """Serie anual de ingresos y etiquetas usadas (para fechar la presentación)."""
         tags = etiquetas_ingresos(sic)
-        rev = self._serie_fusionada(facts, tags, self.years)
+        rev = fusionar_ingresos({t: self._annual_series(facts, [t], 10_000, "flow") for t in tags}, tags)
         if str(sic or "").startswith(SIC_BANCA):
             b = {k: self._serie_fusionada(facts, t, 10_000) for k, t in BANK_CONCEPTS.items()}
             banca = ingresos_banca(b["nii"], b["interest_income"], b["interest_expense"], b["noninterest_income"])
-            if banca and (not rev or max(banca) > max(rev)):
-                return ({fy: banca[fy] for fy in sorted(banca)[-self.years:]},
-                        BANK_CONCEPTS["nii"] + BANK_CONCEPTS["interest_income"])
-        return rev, tags
+            if usar_ingresos_banca(rev, banca, beneficio):
+                rev, tags = banca, BANK_CONCEPTS["nii"] + BANK_CONCEPTS["interest_income"]
+        return {fy: rev[fy] for fy in sorted(rev)[-self.years:]}, tags
 
     @staticmethod
     def _fecha_presentacion(facts: dict, tags: list[str], fy_objetivo: int) -> str | None:
@@ -446,7 +489,8 @@ class SecEdgarProvider:
 
         flows = {k: self._annual_series(facts, tags, self.years, "flow")
                  for k, tags in CONCEPTS.items()}
-        flows["revenue"], tags_ingresos = self._ingresos(facts, sic)
+        flows["revenue"], tags_ingresos = self._ingresos(facts, sic, self._annual_series(
+            facts, CONCEPTS["net_income"], 10_000, "flow"))
         stocks = {k: self._annual_series(facts, tags, self.years, "stock")
                   for k, tags in BALANCE_CONCEPTS.items()}
 
@@ -460,9 +504,13 @@ class SecEdgarProvider:
                     f"{ticker}: informa bajo IFRS (emisor extranjero, probablemente 20-F), "
                     "no US-GAAP — no soportado todavía, ver limitaciones en el README"
                 )
+            if tiene_ifrs:
+                raise ValueError(f"{ticker}: sus cuentas están en IFRS (emisor extranjero), no en US-GAAP "
+                                 "— no soportado todavía, ver limitaciones en el README")
             if flows.get("net_income"):
-                raise ValueError(f"{ticker}: no publica ingresos en la SEC (empresa sin ventas todavía, "
-                                 "p. ej. biotecnológica en fase clínica o minera en desarrollo)")
+                raise ValueError(f"{ticker}: no publica ingresos en la SEC con las etiquetas estándar (empresa "
+                                 "sin ventas todavía —p. ej. biotecnológica en fase clínica o minera en "
+                                 "desarrollo— o que usa etiquetas propias)")
             raise ValueError(f"{ticker}: aún no tiene cuentas anuales (10-K) en la SEC "
                              "(recién salida a bolsa, escindida o reorganizada)")
 
