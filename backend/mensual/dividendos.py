@@ -863,10 +863,16 @@ def _extraer(data: pd.DataFrame, tickers: list[str]) -> dict[str, dict]:
             div = sub["Dividends"] if "Dividends" in sub.columns else pd.Series(dtype=float)
             div = div.dropna()
             div = div[div > 0]
-            for s in (close, adj, div):
+            spl = sub["Stock Splits"] if "Stock Splits" in sub.columns else pd.Series(dtype=float)
+            spl = spl.dropna()
+            spl = spl[(spl > 0) & (spl != 1)]
+            for s in (close, adj, div, spl):
                 if getattr(s.index, "tz", None) is not None:
                     s.index = s.index.tz_localize(None)
-            salida[t] = {"close": close, "adj": adj, "div": div}
+            # OJO: el «Close» de Yahoo viene ajustado por splits (no por dividendos). Para comparar
+            # un precio antiguo con las acciones que la empresa declaraba ENTONCES hay que deshacer
+            # los splits posteriores: ver pit.factor_splits.
+            salida[t] = {"close": close, "adj": adj, "div": div, "splits": spl}
         except (KeyError, ValueError):
             continue
     return salida

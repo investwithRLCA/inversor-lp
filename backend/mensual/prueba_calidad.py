@@ -45,7 +45,7 @@ from quant_filter import screen
 
 from .estrategia import Params, aplicar_tope_sector, elegir_candidatas, senales
 from .paquetes import ReglasPaquetes, evaluar
-from .pit import FuentePIT
+from .pit import FuentePIT, factor_splits
 
 HORIZONTES = (12, 24, 36)
 PAQUETES = ("corto", "medio", "largo")
@@ -91,7 +91,8 @@ class Cohortes:
 
 def calcular_cohortes(adj: pd.DataFrame, raw: pd.DataFrame, pit: FuentePIT, sectores: dict[str, str],
                       inicio: str = "2015-01-01", bench: str = "SPY", p: Params | None = None,
-                      reglas: ReglasPaquetes | None = None, progreso: bool = True) -> Cohortes:
+                      reglas: ReglasPaquetes | None = None, progreso: bool = True,
+                      splits: dict[str, pd.Series] | None = None) -> Cohortes:
     p = p or Params()
     reglas = dataclasses.replace(reglas or ReglasPaquetes(), n_corto=p.n_max, n_max_sector=p.n_max_sector)
     acciones = adj.drop(columns=[bench], errors="ignore")
@@ -139,6 +140,11 @@ def calcular_cohortes(adj: pd.DataFrame, raw: pd.DataFrame, pit: FuentePIT, sect
             precio = raw_np[ya, k]
             if not np.isfinite(precio) or precio <= 0 or not np.isfinite(adj_np[ya, k]):
                 continue
+            # Yahoo da el cierre ajustado por splits posteriores: se devuelve a la base de las cuentas
+            if splits is not None and c in splits and len(splits[c]):
+                clave = pit.ultima_presentacion(c, fecha)
+                if clave:
+                    precio = precio * factor_splits(splits[c], clave)
             f = pit.fundamentales(c, fecha, float(precio))
             if f is None:
                 continue
@@ -467,7 +473,9 @@ def main() -> None:
         raise RuntimeError(f"Solo hay precios del {cov:.0%} de las empresas: resultado poco fiable.")
 
     print("Reconstruyendo, mes a mes, lo que habría elegido cada paquete...")
-    coh = calcular_cohortes(ajust, cierre, pit, sectores, inicio=args.inicio)
+    splits = {t: d["splits"] for t, d in datos.items() if len(d.get("splits", [])) > 0}
+    print(f"Empresas con splits en el periodo: {len(splits)} (sus precios se devuelven a la base de cada presentación).")
+    coh = calcular_cohortes(ajust, cierre, pit, sectores, inicio=args.inicio, splits=splits)
     md = informe_md(coh, args.inicio, len(tickers), len(pit.datos))
     out = Path(args.salida)
     out.mkdir(parents=True, exist_ok=True)

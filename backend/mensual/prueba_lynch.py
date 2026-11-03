@@ -46,7 +46,7 @@ from lynch import ReglasLynch, evaluar as evaluar_lynch
 from quant_filter import screen
 
 from .estrategia import aplicar_tope_sector
-from .pit import FuentePIT
+from .pit import FuentePIT, factor_splits
 from .prueba_calidad import _bloques, fines_de_mes
 
 HORIZONTES = (12, 24, 36)
@@ -73,8 +73,10 @@ class Resultado:
 
 
 def calcular(adj: pd.DataFrame, pit: FuentePIT, sectores: dict[str, str], inicio: str = "2015-01-01",
-             reglas: ReglasLynch | None = None, progreso: bool = True, crudo: pd.DataFrame | None = None) -> Resultado:
-    """`adj`: precios ajustados (rentabilidades); `crudo`: precios sin ajustar (PER y capitalización)."""
+             reglas: ReglasLynch | None = None, progreso: bool = True, crudo: pd.DataFrame | None = None,
+             splits: dict[str, pd.Series] | None = None) -> Resultado:
+    """`adj`: precios ajustados (rentabilidades); `crudo`: cierres de Yahoo (ajustados solo por splits),
+    que con `splits` se devuelven a la base de las acciones de cada presentación (PER y capitalización)."""
     reglas = reglas or ReglasLynch()
     benchs = [b for b in set(BENCH.values()) if b in adj.columns]
     acciones = adj.drop(columns=benchs, errors="ignore")
@@ -113,6 +115,10 @@ def calcular(adj: pd.DataFrame, pit: FuentePIT, sectores: dict[str, str], inicio
             precio = cr[x, k]
             if not np.isfinite(precio) or precio <= 0 or not np.isfinite(a[x, k]):
                 continue
+            if splits is not None and c in splits and len(splits[c]):
+                clave = pit.ultima_presentacion(c, fecha)
+                if clave:
+                    precio = precio * factor_splits(splits[c], clave)
             f = pit.fundamentales(c, fecha, float(precio))
             if f is None or not f.shares_diluted or not f.market_cap:
                 continue
@@ -481,7 +487,10 @@ def main() -> None:
 
     acciones = [c for c in ajust.columns if c not in BENCH.values() and c in pit.datos]
     print("Reconstruyendo, mes a mes, lo que habría elegido el filtro Lynch...")
-    res = calcular(ajust[acciones + [b for b in BENCH.values()]], pit, sectores, inicio=args.inicio, crudo=cierre[acciones])
+    splits = {t: d["splits"] for t, d in datos.items() if len(d.get("splits", [])) > 0}
+    print(f"Empresas con splits en el periodo: {len(splits)} (sus precios se devuelven a la base de cada presentación).")
+    res = calcular(ajust[acciones + [b for b in BENCH.values()]], pit, sectores, inicio=args.inicio,
+                   crudo=cierre[acciones], splits=splits)
     md = informe_md(res, args.inicio, len(tickers), len(pit.datos))
     out = Path(args.salida)
     out.mkdir(parents=True, exist_ok=True)

@@ -118,6 +118,26 @@ def _serie_en(por_tag: dict, orden_tags: list[str], corte: str) -> dict[str, flo
 # 2. Fuente point-in-time
 # --------------------------------------------------------------------------- #
 
+def factor_splits(splits, desde) -> float:
+    """Producto de los splits con fecha POSTERIOR a `desde`.
+
+    Yahoo da los precios antiguos ya ajustados por los splits de después. Las cuentas que
+    se presentaron en `desde` usan las acciones de entonces. Para que precio y acciones
+    (y PER, capitalización) estén en la misma base: precio de Yahoo × factor_splits(splits,
+    fecha de la presentación). Sin esto, una empresa que luego hizo un split de 10 por 1
+    parece 10 veces más barata y más pequeña de lo que era: sesgo a favor de las futuras
+    ganadoras (las que suben mucho son las que hacen splits)."""
+    if splits is None or len(splits) == 0:
+        return 1.0
+    import pandas as _pd
+    posteriores = splits[splits.index > _pd.Timestamp(desde)]
+    f = 1.0
+    for x in posteriores:
+        if x and x > 0:
+            f *= float(x)
+    return f
+
+
 class FuentePIT:
     """Datos de la SEC de varias empresas ya descargados (ver `descargar`) y
     capaces de dar los `Fundamentals` de cualquier empresa en cualquier fecha."""
@@ -196,6 +216,13 @@ class FuentePIT:
         return cls.cargar(carpeta, tickers, anios)
 
     # -- consulta ----------------------------------------------------------- #
+    def ultima_presentacion(self, ticker: str, fecha) -> str | None:
+        """Fecha de la última presentación a la SEC hasta `fecha` (o None)."""
+        if ticker not in self.datos:
+            return None
+        corte = fecha.strftime("%Y-%m-%d") if hasattr(fecha, "strftime") else str(fecha)[:10]
+        return self._ultima_presentacion(ticker, corte)
+
     def _ultima_presentacion(self, ticker: str, corte: str) -> str | None:
         """Fecha de la última presentación a la SEC hasta `corte` (lo que cambia los datos)."""
         if ticker not in self._presentaciones:
