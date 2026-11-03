@@ -41,7 +41,9 @@ jobs:
         working-directory: backend
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
-        run: python -W ignore -m mensual.mercados --salida ../docs/mercados.json --detalle
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python -W ignore -m mensual.mercados --salida ../docs/mercados.json --detalle --resumen
 
       - name: Guardar en el repositorio (solo si ha cambiado)
         env:

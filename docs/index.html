@@ -117,6 +117,23 @@
     color: var(--ink);
   }
 
+  .mercados { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: -2px 0 10px; }
+  .mercados::-webkit-scrollbar { display: none; }
+  .mercados[hidden] { display: none; }
+  .mercado {
+    flex: none; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--hairline);
+    background: transparent; color: var(--paper-dim); font-size: 12px; font-family: 'IBM Plex Sans', sans-serif; cursor: pointer;
+  }
+  .mercado small { color: var(--slate); font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; margin-left: 3px; }
+  .mercado[aria-pressed="true"] { border-color: var(--brass); color: var(--paper); box-shadow: inset 0 0 0 1px var(--brass); }
+  .mercado[aria-pressed="true"] small { color: var(--brass); }
+  .mercado:disabled { opacity: .45; cursor: default; }
+  .nota-mercado { font-size: 12px; color: var(--slate); margin: 0 0 12px; line-height: 1.45; }
+  .nota-mercado .fuente { display: block; margin-top: 2px; font-size: 11px; }
+  .etq-mercado { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .etq-mercado span { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hairline); color: var(--paper-dim); white-space: nowrap; }
+  .etq-mercado span.idx { border-color: var(--brass-dim); color: var(--brass); }
+
   .buscar {
     width: 100%;
     padding: 10px 14px;
@@ -420,6 +437,7 @@
       <button class="tab" data-filtro="vigilar">Vigilar</button>
       <button class="tab" data-filtro="descartadas">Descartadas</button>
     </div>
+    <div class="mercados" id="mercados" role="group" aria-label="Filtrar por mercado" hidden></div>
     <input class="buscar" id="buscar" type="search" placeholder="Buscar por ticker o nombre…" autocomplete="off" />
   </div>
 </header>
@@ -450,8 +468,101 @@ const GRUPOS = {
 };
 
 let datos = [];
+let cargado = false;              // hasta que llegan las tesis no se pinta la lista
 let filtroActivo = "todas";
 let busqueda = "";
+
+// ── Mercados: a qué índice / bolsa pertenece cada empresa. Sale de docs/mercados.json,
+//    que el workflow «Listas de mercados» actualiza cada lunes (listas públicas de empresas).
+const MERCADOS = [
+  ["todos", "Todos"], ["sp500", "S&P 500"], ["ndx", "Nasdaq-100"], ["r2000", "Russell 2000"],
+  ["sp400", "S&P 400"], ["sp600", "S&P 600"], ["nasdaq", "Bolsa Nasdaq"], ["nyse", "Bolsa NYSE"],
+  ["otros", "Fuera de índices"],
+];
+const INDICES = ["sp500", "ndx", "r2000", "sp400", "sp600"];
+const ETQ_CORTA = { sp500: "S&P 500", ndx: "Nasdaq-100", r2000: "Russell 2000", sp400: "S&P 400", sp600: "S&P 600", nasdaq: "Nasdaq", nyse: "NYSE" };
+const NOTA_MERCADO = {
+  sp500: "Las ~500 mayores empresas de EE. UU.",
+  ndx: "Las 100 mayores empresas no financieras que cotizan en el Nasdaq.",
+  r2000: "Small caps de EE. UU.: las ~2.000 que van detrás de las 1.000 mayores. Ojo: el bot solo analiza empresas de más de 1.000 M$, así que aquí salen las small caps más grandes del índice; las más pequeñas no llegan a analizarse.",
+  sp400: "Empresas medianas (mid caps) de EE. UU.",
+  sp600: "Small caps de EE. UU. que dan beneficios (el S&P 600 exige ser rentable para entrar).",
+  nasdaq: "Todas las que cotizan en la bolsa Nasdaq (lo que se llama «Nasdaq Composite»).",
+  nyse: "Todas las que cotizan en la bolsa de Nueva York.",
+  otros: "No están en ninguno de esos cinco índices: extranjeras que cotizan en EE. UU., recién llegadas a bolsa o fuera de los índices.",
+};
+const CLAVE_MERCADO = "vigia.cartera.mercado";
+let infoMercados = null;          // contenido de mercados.json
+let mercadosDe = new Map();       // ticker → Set de códigos
+let filtroMercado = "todos";
+try { filtroMercado = localStorage.getItem(CLAVE_MERCADO) || "todos"; } catch (e) { /* sin almacenamiento */ }
+
+function codigosDe(ticker) {
+  return mercadosDe.get(String(ticker || "").toUpperCase()) || new Set();
+}
+function enMercado(fila, cod) {
+  if (cod === "todos" || !infoMercados) return true;
+  const c = codigosDe(fila.ticker);
+  if (cod === "otros") return !INDICES.some(k => c.has(k));
+  return c.has(cod);
+}
+function etiquetasMercado(ticker) {
+  if (!infoMercados) return "";
+  const c = codigosDe(ticker);
+  const idx = INDICES.filter(k => c.has(k)).map(k => `<span class="idx">${ETQ_CORTA[k]}</span>`);
+  const bol = ["nasdaq", "nyse"].filter(k => c.has(k)).map(k => `<span>${ETQ_CORTA[k]}</span>`);
+  const todo = idx.concat(bol);
+  return todo.length ? `<div class="etq-mercado">${todo.join("")}</div>` : "";
+}
+function fmtDia(iso) {
+  if (!iso) return "";
+  const [a, m, d] = String(iso).slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(a, m - 1, d)).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+const $mercados = document.getElementById("mercados");
+function pintarMercados(base) {
+  if (!infoMercados) { $mercados.hidden = true; return; }
+  const disponibles = MERCADOS.filter(([k]) => k === "todos" || k === "otros" || infoMercados.mercados[k]);
+  if (!disponibles.some(([k]) => k === filtroMercado)) filtroMercado = "todos";
+  $mercados.innerHTML = disponibles.map(([k, nombre]) => {
+    const n = base.filter(f => enMercado(f, k)).length;
+    return `<button class="mercado" data-mercado="${k}" aria-pressed="${k === filtroMercado}">${nombre}<small>${n}</small></button>`;
+  }).join("");
+  $mercados.hidden = false;
+  $mercados.querySelectorAll(".mercado").forEach(b => b.addEventListener("click", () => {
+    filtroMercado = b.dataset.mercado;
+    try { localStorage.setItem(CLAVE_MERCADO, filtroMercado); } catch (e) { /* sin almacenamiento */ }
+    pintar();
+  }));
+}
+function notaMercado() {
+  if (!infoMercados || filtroMercado === "todos") return "";
+  const m = infoMercados.mercados[filtroMercado];
+  const fuente = m ? ` <span class="fuente">Lista: ${m.fuente}${m.fecha ? ", a " + fmtDia(m.fecha) : ""}.</span>` : "";
+  return `<p class="nota-mercado">${NOTA_MERCADO[filtroMercado] || ""}${fuente}</p>`;
+}
+
+async function cargarMercados() {
+  try {
+    const r = await fetch("mercados.json", { cache: "no-cache" });
+    if (!r.ok) return;
+    const js = await r.json();
+    if (!js || js.version !== 1 || !js.mercados) return;
+    const mapa = new Map();
+    for (const [cod, m] of Object.entries(js.mercados)) {
+      for (const t of m.tickers || []) {
+        if (!mapa.has(t)) mapa.set(t, new Set());
+        mapa.get(t).add(cod);
+      }
+    }
+    infoMercados = js;
+    mercadosDe = mapa;
+    if (cargado) pintar();
+  } catch (e) {
+    console.warn("Sin listas de mercados:", e);   // el filtro simplemente no aparece
+  }
+}
 
 const $lista = document.getElementById("lista");
 const $estado = document.getElementById("estado");
@@ -502,6 +613,7 @@ function tarjeta(fila) {
       <div class="id-empresa">
         <div class="ticker">${fila.ticker}<span class="pill v-${fila.veredicto_final}">${fila.veredicto_final.replace('_',' ')}</span></div>
         <div class="nombre">${fila.name || ''}</div>
+        ${etiquetasMercado(fila.ticker)}
       </div>
     </div>
     <div class="precios">
@@ -545,15 +657,17 @@ function pintar() {
   const grupo = GRUPOS[filtroActivo];
   const q = busqueda.trim().toLowerCase();
 
-  const visibles = datos.filter(f => {
-    if (grupo && !grupo.includes(f.veredicto_final)) return false;
+  const porVeredicto = datos.filter(f => !grupo || grupo.includes(f.veredicto_final));
+  pintarMercados(porVeredicto);
+  const visibles = porVeredicto.filter(f => {
+    if (!enMercado(f, filtroMercado)) return false;
     if (q && !`${f.ticker} ${f.name || ''}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
-  $lista.innerHTML = "";
+  $lista.innerHTML = notaMercado();
   if (visibles.length === 0) {
-    $lista.innerHTML = `<div class="vacio">Nada por aquí.<br>Ajusta el filtro o la búsqueda.</div>`;
+    $lista.insertAdjacentHTML("beforeend", `<div class="vacio">Nada por aquí.<br>Ajusta el filtro o la búsqueda.</div>`);
     return;
   }
   visibles.forEach(f => $lista.appendChild(tarjeta(f)));
@@ -597,6 +711,7 @@ async function cargar() {
     });
 
     $estado.textContent = `${datos.length} empresa${datos.length === 1 ? '' : 's'}`;
+    cargado = true;
     pintar();
   } catch (err) {
     console.error(err);
@@ -606,6 +721,7 @@ async function cargar() {
 }
 
 cargar();
+cargarMercados();
 </script>
 <script src="mensual.js?v=4"></script>
 <script src="mensual-ui.js?v=4"></script>

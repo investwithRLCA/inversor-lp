@@ -106,6 +106,24 @@ el trabajo entre las tres, cada una tiene que venir de un proyecto distinto (en
 https://aistudio.google.com/apikey, cambia de proyecto arriba antes de crear cada
 clave nueva).
 
+## Filtro por mercado en el Vigía
+
+En la vista **Cartera** del Vigía, debajo de *Todas / Comprar / Vigilar / Descartadas*, hay una
+fila para filtrar por mercado: **S&P 500, Nasdaq-100, Russell 2000, S&P 400, S&P 600, bolsa
+Nasdaq, bolsa NYSE** y **Fuera de índices**. Se combina con el veredicto y con la búsqueda, cada
+botón muestra cuántas empresas hay, el elegido se recuerda, y cada tarjeta lleva sus etiquetas
+de índice y bolsa.
+
+- Las listas salen de `docs/mercados.json`, que el workflow `mercados.yml` actualiza **cada lunes**
+  (o a mano: *Actions → Listas de mercados (filtro del Vigía) → Run workflow*). Fuentes: S&P 500
+  (datasets/s-and-p-500-companies), Nasdaq-100 (Wikipedia o nasdaq.com), **Russell 2000 = posiciones
+  del ETF IWM de iShares** (respaldo: VTWO de Vanguard), S&P 400 y 600 (Wikipedia), bolsa (SEC).
+  Si una fuente falla, se conserva la lista anterior con su fecha.
+- El log de ese workflow incluye cuántas COMPRA FUERTE / COMPRA / VIGILAR hay en cada mercado.
+- **Ojo con el Russell 2000:** el cribado del bot exige más de 1.000 M$ de capitalización
+  (`quant_filter.py`, `min_market_cap`), así que solo llegan a analizarse las small caps más
+  grandes del índice (que va de ~150 M$ a ~5.700 M$).
+
 ## Módulo mensual de oportunidades (experimental)
 
 Complemento del bot de largo plazo, pensado para ir **mes a mes**: tú decides cuánto dinero
@@ -234,6 +252,8 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Mensual. |
 | `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano. |
 | `.github/workflows/prueba-paquetes.yml` | Prueba histórica de los paquetes con cuentas de cada fecha (a mano; informe en *Summary*). |
+| `backend/mensual/mercados.py` | Listas de índices y bolsas para el filtro por mercado del Vigía (`docs/mercados.json`). |
+| `.github/workflows/mercados.yml` | Actualiza esas listas cada lunes. |
 | `.github/workflows/dividendos.yml` | Sección de dividendos suelta (a mano), con opción de depurar empresas concretas. |
 | `.github/workflows/backtest-mensual.yml` | Repite la prueba histórica a mano (informe en *Summary*; zip en *Artifacts*). |
 

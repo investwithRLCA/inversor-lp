@@ -310,10 +310,41 @@ def descargar(detalle: bool = False) -> dict[str, dict]:
     return nuevas
 
 
+def resumen_tesis(res: dict, filas: list[dict]) -> list[str]:
+    """Cuántas recomendaciones del bot (COMPRA FUERTE / COMPRA / VIGILAR) hay en cada mercado."""
+    grupos = (("COMPRA_FUERTE",), ("COMPRA",), ("VIGILAR",))
+    de: dict[str, set] = {}
+    for cod, m in res["mercados"].items():
+        for t in m["tickers"]:
+            de.setdefault(t, set()).add(cod)
+    indices = ("sp500", "ndx", "r2000", "sp400", "sp600")
+    lineas = ["Mercado          COMPRA_FUERTE  COMPRA  VIGILAR"]
+    for cod in list(MERCADOS) + ["otros"]:
+        if cod != "otros" and cod not in res["mercados"]:
+            continue
+        nombre = MERCADOS[cod][0] if cod != "otros" else "Fuera de índices"
+        def dentro(f):
+            c = de.get(norm(f.get("ticker")), set())
+            return not (c & set(indices)) if cod == "otros" else cod in c
+        n = [sum(1 for f in filas if f.get("veredicto_final") in g and dentro(f)) for g in grupos]
+        lineas.append(f"{nombre:16s} {n[0]:13d} {n[1]:7d} {n[2]:8d}")
+    return lineas
+
+
+def _tesis_supabase() -> list[dict]:
+    url, clave = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY")
+    if not url or not clave:
+        return []
+    from supabase import create_client
+    r = create_client(url, clave).table("v_tesis_completa").select("ticker,veredicto_final").execute()
+    return r.data or []
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Listas de índices y bolsas para el filtro del Vigía")
     ap.add_argument("--salida", default="../docs/mercados.json")
     ap.add_argument("--detalle", action="store_true", help="imprime qué devuelve cada fuente")
+    ap.add_argument("--resumen", action="store_true", help="cuenta las recomendaciones del bot por mercado (lee Supabase)")
     a = ap.parse_args(argv)
     salida = Path(a.salida)
     previo = None
@@ -329,6 +360,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{nombre:14s} {m['n'] if m else 0:5d}  {(m or {}).get('fuente', '—')}  {(m or {}).get('fecha', '')}")
     for av in res["avisos"]:
         print("Aviso:", av)
+    if a.resumen:
+        try:
+            filas = _tesis_supabase()
+            if filas:
+                print(f"\nRecomendaciones del bot por mercado ({len(filas)} empresas analizadas):")
+                print("\n".join(resumen_tesis(res, filas)))
+        except Exception as e:  # noqa: BLE001  (el resumen es informativo)
+            print(f"(sin resumen: {type(e).__name__})")
     if not res["mercados"]:
         print("No se pudo obtener ninguna lista: no se toca el fichero.")
         return 1
