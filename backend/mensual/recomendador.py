@@ -1059,6 +1059,12 @@ def main() -> None:
         print(f"  [{P['etiqueta']}] {[c['ticker'] for c in P['candidatas']]}")
     if "corto" in inf["paquetes"]:
         print(f"  vetadas (corto): {[v['ticker'] for v in inf['vetadas']]}")
+    # Por qué no entran las demás que cumplían (datos públicos de empresas)
+    for clave, P in inf["paquetes"].items():
+        for v in P.get("vetadas") or []:
+            print(f"    {clave:9} frenada   {v['ticker']:6} {v['motivo']}")
+        for v in P.get("en_espera") or []:
+            print(f"    {clave:9} en espera {v['ticker']:6} {v['motivo']}")
     # Detalle de las elegidas (datos públicos de empresas): sirve para comprobar en el registro
     # de la ejecución que la SEC (último trimestre) y la IA han respondido de verdad.
     for clave, P in inf["paquetes"].items():
