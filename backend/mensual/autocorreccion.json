@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "actualizado": "2026-11-03",
+  "grupos": {
+    "pequenas": {
+      "variante": "lynch_cribado",
+      "activo": true,
+      "motivo": "primera validación",
+      "ex12": 0.059279414140384484,
+      "ex24": 0.14955941805646542,
+      "aprueban": [
+        "lynch",
+        "lynch_cribado"
+      ]
+    },
+    "grandes": {
+      "variante": "calidad",
+      "activo": true,
+      "motivo": "primera validación",
+      "ex12": 0.02425766052067835,
+      "ex24": 0.06297059556378162,
+      "aprueban": [
+        "calidad"
+      ]
+    }
+  },
+  "historial": []
+}
