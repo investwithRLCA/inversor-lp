@@ -1,0 +1,66 @@
+name: Listas de mercados (filtro del Vigía)
+
+# Descarga a qué índice (S&P 500, Nasdaq-100, Russell 2000, S&P 400, S&P 600)
+# y a qué bolsa (Nasdaq, NYSE) pertenece cada empresa, y lo guarda en
+# docs/mercados.json para que el Vigía pueda filtrar las recomendaciones por
+# mercado. Solo listas públicas de empresas: nada de tu cartera.
+#
+# Se ejecuta solo cada lunes (los índices cambian poco: el Russell 2000 se
+# rehace en junio y diciembre). Lanzarlo a mano: pestaña "Actions" →
+# "Listas de mercados (filtro del Vigía)" → "Run workflow".
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"        # lunes, 06:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: mercados
+  cancel-in-progress: false
+
+jobs:
+  mercados:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-mensual.txt
+
+      - name: Descargar las listas
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -W ignore -m mensual.mercados --salida ../docs/mercados.json --detalle
+
+      - name: Guardar en el repositorio (solo si ha cambiado)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/mercados.json
+          if git diff --cached --quiet; then
+            echo "Sin cambios."
+            exit 0
+          fi
+          git commit -m "Mercados: listas de índices y bolsas actualizadas"
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then
+              # que GitHub Pages publique ya el fichero nuevo (si no, lo hará con el próximo cambio)
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds" >/dev/null 2>&1 || echo "(no se pudo pedir la publicación de Pages; se hará con el próximo cambio)"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
