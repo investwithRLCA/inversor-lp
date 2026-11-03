@@ -5,9 +5,9 @@
     "pequenas": {
       "variante": "lynch_cribado",
       "activo": true,
-      "motivo": "primera validación",
-      "ex12": 0.059279414140384484,
-      "ex24": 0.14955941805646542,
+      "motivo": "sigue aprobando",
+      "ex12": 0.06221664260366325,
+      "ex24": 0.14748490744726211,
       "aprueban": [
         "lynch",
         "lynch_cribado"
@@ -16,9 +16,9 @@
     "grandes": {
       "variante": "calidad",
       "activo": true,
-      "motivo": "primera validación",
-      "ex12": 0.02425766052067835,
-      "ex24": 0.06297059556378162,
+      "motivo": "sigue aprobando",
+      "ex12": 0.024608695091948993,
+      "ex24": 0.0629208503450929,
       "aprueban": [
         "calidad"
       ]
