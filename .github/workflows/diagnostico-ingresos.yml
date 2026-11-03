@@ -1,0 +1,38 @@
+name: Diagnóstico de ingresos (SEC)
+
+# Herramienta de diagnóstico: para las empresas de los índices que el bot no puede
+# analizar por falta de serie de ingresos, mira qué conceptos tienen en la SEC.
+# Solo datos públicos de empresas. Lanzarlo a mano desde Actions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Tickers separados por espacios (vacío = los de Supabase con ese error)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  diagnosticar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Diagnosticar
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TICKERS: ${{ github.event.inputs.tickers }}
+        run: python -W ignore diag_ingresos.py $TICKERS
