@@ -390,6 +390,64 @@ def generar_informe(
             resultado[paquete] = recorrer(paquete, [pos[c] for c in orden], reglas.n_de(paquete),
                                           evals=ev_p, post=post_lynch, max_sector=reglas.sector_de(paquete))
 
+    # ===================== GRANDES · calidad (> 5.000 M$) ======================== #
+    if "calidad_g" in activos:
+        ev_g: dict[str, dict] = {}
+        for k, c in enumerate(cols):
+            f = por_col.get(c)
+            if not f or not f.get("pasa_cribado"):
+                continue
+            l = f.get("lynch") or {}
+            precio = float(sen["precio"].iloc[k])
+            px = l.get("px") or ((l.get("per") or 0) * (l.get("bpa") or 0)) or None
+            cap0 = l.get("cap")
+            if not px or not cap0:                       # respaldo: precio y capitalización de la ficha del cribado
+                px, cap0 = f.get("snap_precio"), f.get("snap_cap")
+            try:
+                px, cap0 = float(px), float(cap0)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(precio) or precio <= 0 or px <= 0 or cap0 <= 0:
+                continue
+            ratio = precio / px
+            cap = cap0 * ratio
+            if cap < reglas.lynch_cap_grande:
+                continue
+            m = f.get("metricas") or {}
+            ev_ebit = m.get("ev_ebit")
+            ev_ebit = ev_ebit * ratio if (ev_ebit and ev_ebit > 0) else None
+            roic = m.get("roic_medio") if m.get("roic_medio") is not None else m.get("roic")
+            ev_g[c] = {"grandes": {"cap": round(cap, 0), "ev_ebit": None if ev_ebit is None else round(ev_ebit, 1),
+                                   "roic": None if roic is None else round(roic, 1), "nota": f.get("quant_score")},
+                       "clave": pq.metricas_clave(m), "razones": _razones_grandes(m, ev_ebit, f.get("quant_score"))}
+            ev_g[c]["clave"]["ev_ebit"] = ev_ebit
+        var = reglas.grandes_variante
+        if var == "calidad":
+            for c in list(ev_g):
+                nota = ev_g[c]["grandes"]["nota"]
+                if nota is None:
+                    del ev_g[c]
+                else:
+                    ev_g[c]["puntos"] = float(nota)
+        else:
+            for c in list(ev_g):
+                if ev_g[c]["grandes"]["ev_ebit"] is None or (var == "magica" and ev_g[c]["grandes"]["roic"] is None):
+                    del ev_g[c]
+            if var == "calidad_precio":
+                for c in ev_g:
+                    ev_g[c]["puntos"] = round(100.0 / ev_g[c]["grandes"]["ev_ebit"], 2)
+            else:                            # fórmula mágica: ranking de ROIC + ranking de rentabilidad del beneficio
+                ts = list(ev_g)
+                r_roic = pd.Series([ev_g[c]["grandes"]["roic"] for c in ts]).rank(ascending=False).to_numpy()
+                r_ey = pd.Series([-ev_g[c]["grandes"]["ev_ebit"] for c in ts]).rank(ascending=False).to_numpy()
+                n_t = max(1, len(ts))
+                for c, a_, b_ in zip(ts, r_roic, r_ey):
+                    ev_g[c]["puntos"] = round(100.0 * (1 - (a_ + b_ - 2) / (2 * n_t)), 1)
+        orden = sorted(ev_g, key=lambda c: (-ev_g[c]["puntos"], c))
+        n_aptas["calidad_g"] = len(orden)
+        resultado["calidad_g"] = recorrer("calidad_g", [pos[c] for c in orden], reglas.n_de("calidad_g"),
+                                          evals=ev_g, post=post_lynch, max_sector=reglas.sector_de("calidad_g"))
+
     if "corto" in activos and estado_ia["agotada"]:
         avisos.append(f"Se agotó el límite de {max_ia} análisis de IA: las últimas candidatas del "
                       "paquete corto van sin explicación de la IA.")
@@ -491,6 +549,22 @@ def generar_informe(
             log.exception("Seguimiento no disponible")
             informe["avisos"].append(f"No se pudo calcular el seguimiento de informes anteriores: {e}")
     return informe
+
+
+def _razones_grandes(m: dict, ev_ebit, nota) -> list[str]:
+    k = pq.metricas_clave(m)
+    out = []
+    if nota is not None:
+        out.append(f"Nota del cribado de calidad: {nota:.0f}/100.")
+    if k["roic"] is not None:
+        out.append(f"Rentabilidad sobre el capital (ROIC) del {k['roic']:.0f} %.")
+    if k["fcf_margen"] is not None:
+        out.append(f"Caja libre del {k['fcf_margen']:.0f} % de las ventas.")
+    if k["crec"] is not None:
+        out.append(f"Ingresos creciendo un {k['crec']:.1f} % al año.")
+    if ev_ebit:
+        out.append(f"Valor de empresa {ev_ebit:.0f} veces su beneficio operativo (rentabilidad del beneficio del {100 / ev_ebit:.1f} %).")
+    return out[:5]
 
 
 def _razones_lynch(guardado: dict, ev: dict) -> list[str]:
@@ -615,7 +689,7 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
             A("_Varias cotizan en la parte alta de su rango de 5 años (normal en negocios que crecen "
               "mucho): si compras, mejor escalonado en varios meses._\n")
     for clave, titulo, ref in (("lynch_g", "### 🔭 Peter Lynch · grandes (> 5.000 M$)\n", "S&P 500"),
-                               ("lynch_p", "### 🔭 Peter Lynch · pequeñas (300–5.000 M$)\n", "Russell 2000")):
+                               ("lynch_p", "### 🔭 Pequeñas · Peter Lynch + calidad (300–5.000 M$)\n", "Russell 2000")):
         P = paq.get(clave)
         if not P:
             continue
@@ -641,7 +715,23 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
             A("")
         A(f"_Se comparan con el {ref}. Las marcadas «sin IA aún» solo han pasado los números: "
           "mira qué hace la empresa antes de comprar._\n")
-    if cands or any((paq.get(k) or {}).get("candidatas") for k in ("medio", "largo", "lynch_g", "lynch_p")) or (inf.get("dividendos") or {}).get("candidatas"):
+    P = paq.get("calidad_g")
+    if P:
+        A("### 🏛️ Grandes · calidad (> 5.000 M$)\n")
+        if not P["candidatas"]:
+            A(f"Ninguna empresa grande pasa hoy el cribado con los frenos ({P['n_aptas']} aptas antes de los frenos).\n")
+        else:
+            A("| Empresa | Precio | Puntos | ROIC | Caja libre | Ingresos/año | EV/EBIT | Nivel |")
+            A("|---|---:|---:|---:|---:|---:|---:|---|")
+            f1 = lambda v, s_="": "—" if v is None else f"{v:.0f}{s_}"  # noqa: E731
+            for c in P["candidatas"]:
+                k = c.get("clave") or {}
+                nivel = c["veredicto"].replace("_", " ") if c["veredicto"] != "SIN_TESIS" else "solo cribado"
+                A(f"| **{c['ticker']}** · {c['nombre']} | {c['precio']:.2f} | {c['puntos']:.0f} | {f1(k.get('roic'), ' %')} | "
+                  f"{f1(k.get('fcf_margen'), ' %')} | {f1(k.get('crec'), ' %')} | {f1(k.get('ev_ebit'))} | {nivel} |")
+            A("")
+            A("_Se comparan con el S&P 500._\n")
+    if cands or any((paq.get(k) or {}).get("candidatas") for k in ("medio", "largo", "lynch_g", "lynch_p", "calidad_g")) or (inf.get("dividendos") or {}).get("candidatas"):
         A("**Reparto orientativo:** a partes iguales dentro de cada paquete, con tope por empresa. "
           "Cuánto compras de cada una depende de tu importe y de lo que ya tengas: "
           "se calcula en tu móvil.\n")
@@ -684,7 +774,7 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
     if seg:
         A("### 🔎 ¿Están funcionando los paquetes? (seguimiento automático)\n")
         mad = False
-        for clave in ("corto", "medio", "largo", "lynch_g", "lynch_p", "dividendos"):
+        for clave in ("corto", "medio", "largo", "lynch_g", "lynch_p", "calidad_g", "dividendos"):
             s = (seg.get("resumen") or {}).get(clave) or {}
             if s.get("cohortes_maduras"):
                 mad = True
@@ -754,11 +844,20 @@ def cargar_universo(repo) -> list[dict]:
 
     # 2) Detalle (métricas) solo de las que pasan
     filas: dict[str, dict] = {}
-    for r in _paginas(lambda a, b: (
+
+    def detalle(snap: str) -> list[dict]:
+        return list(_paginas(lambda a, b: (
             repo.db.table("quant_screens")
             .select("id,score,created_at,breakdown,companies(ticker,name,sector,is_financial,active),"
-                    "fundamentals_snapshots(metrics,as_of)")
-            .eq("passed", True).order("created_at", desc=True).order("id").range(a, b).execute())):
+                    f"fundamentals_snapshots({snap})")
+            .eq("passed", True).order("created_at", desc=True).order("id").range(a, b).execute())))
+    try:
+        # precio y capitalización de la ficha: respaldo para saber el tamaño (grupo de grandes)
+        filas_det = detalle("metrics,as_of,price,mcap:raw->market_cap")
+    except Exception as e:  # noqa: BLE001
+        log.warning("Sin precio/capitalización de las fichas (%s): se sigue sin ellos", e)
+        filas_det = detalle("metrics,as_of")
+    for r in filas_det:
         if r["id"] not in ids_vigentes:
             continue
         c, s = r.get("companies"), r.get("fundamentals_snapshots")
@@ -770,6 +869,7 @@ def cargar_universo(repo) -> list[dict]:
         filas[t] = {"ticker": t, "name": c.get("name") or "", "sector": c.get("sector") or "",
                     "es_financiera": bool(c.get("is_financial")), "quant_score": r.get("score"),
                     "metricas": (s or {}).get("metrics"), "pasa_cribado": True,
+                    "snap_precio": (s or {}).get("price"), "snap_cap": (s or {}).get("mcap"),
                     "lynch": (r.get("breakdown") or {}).get("lynch"),
                     "veredicto_final": None, "precio_entrada": None, "valor_min": None,
                     "valor_max": None, "nota_fundamental": None, "confianza": None, "analizado_el": None}

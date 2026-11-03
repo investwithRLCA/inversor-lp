@@ -74,6 +74,7 @@ class ResultadoLynch:
     deuda_patrimonio: float | None = None
     caja_neta_pct: float | None = None  # (caja - deuda) / capitalización, %
     capitalizacion: float | None = None  # M$
+    precio: float | None = None          # precio con el que se evaluó
     ventas: float | None = None          # M$, último ejercicio
     inventario_cambio: float | None = None  # puntos de % de las ventas
     motivos: list[str] = field(default_factory=list)   # por qué NO pasa
@@ -91,7 +92,7 @@ class ResultadoLynch:
                 "crec": r(self.crec_bpa, 1), "per": r(self.per, 1), "peg": r(self.peg), "peg_div": r(self.peg_div),
                 "div": r(self.dividendo), "de": r(self.deuda_patrimonio), "caja": r(self.caja_neta_pct, 1),
                 "inv": r(self.inventario_cambio, 1), "bpa": r(bpa, 4),
-                "cap": r(self.capitalizacion, 0), "ventas": r(self.ventas, 0),
+                "cap": r(self.capitalizacion, 0), "ventas": r(self.ventas, 0), "px": r(self.precio, 4),
                 "motivos": self.motivos[:3], "razones": self.razones[:5]}
 
 
@@ -154,6 +155,10 @@ def _escala(x: float | None, peor: float, mejor: float) -> float:
 def evaluar(f: Fundamentals, r: ReglasLynch = DEFAULT) -> ResultadoLynch:
     res = ResultadoLynch(ticker=f.ticker, pasa=False)
     M = res.motivos
+    # tamaño y precio, siempre (aunque no pase): los usa también el grupo de grandes del módulo mensual
+    res.precio = f.price
+    res.capitalizacion = f.market_cap or ((f.price * f.shares_diluted[-1]) if (f.price and f.shares_diluted) else None)
+    res.ventas = f.revenue[-1] if f.revenue else None
 
     # --- beneficio por acción ---
     ni, sh = f.net_income, f.shares_diluted
@@ -182,7 +187,6 @@ def evaluar(f: Fundamentals, r: ReglasLynch = DEFAULT) -> ResultadoLynch:
     div = (f.dividends_paid[-1] / mcap * 100) if (f.dividends_paid and mcap) else 0.0
     res.dividendo = div
     ventas = f.revenue[-1] if f.revenue else 0.0
-    res.capitalizacion, res.ventas = mcap, ventas
 
     # --- categoría ---
     if g is None or g <= 0:

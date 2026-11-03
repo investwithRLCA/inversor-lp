@@ -19,7 +19,7 @@
   // Etiquetas válidas en una operación. «corto» (1-3 años) y «largo» (5+ años) están RETIRADOS
   // (no superaron la prueba histórica) pero se aceptan para no perder las operaciones ya
   // anotadas con ese paquete. Los activos hoy son «medio» (3-5 años) y «dividendos».
-  const PAQUETES = ["corto", "medio", "largo", "lynch_g", "lynch_p", "dividendos"];
+  const PAQUETES = ["corto", "medio", "largo", "lynch_g", "lynch_p", "calidad_g", "dividendos"];
 
   // ───────────────────────── fechas ─────────────────────────
 

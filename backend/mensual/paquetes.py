@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-PAQUETES = ("corto", "medio", "largo", "lynch_g", "lynch_p")   # todos los que el módulo sabe calcular
+PAQUETES = ("corto", "medio", "largo", "lynch_g", "lynch_p", "calidad_g")   # todos los que el módulo sabe calcular
 # Los que se ofrecen hoy. «corto» y «largo» quedaron desactivados por la prueba
 # histórica (ver arriba); para volver a activarlos basta con añadirlos aquí.
 # «lynch_g» y «lynch_p» = filtro Peter Lynch (backend/lynch.py) en grandes (> 5.000 M$) y
@@ -54,7 +54,11 @@ PAQUETES = ("corto", "medio", "largo", "lynch_g", "lynch_p")   # todos los que e
 #   lynch_g → por debajo del S&P 500 (-3,7 pp a 12 m, -8,9 pp a 24 m)           → desactivado
 #   medio   → con el precio corregido por splits ya NO supera al listado
 #             (-1,7 pp a 12 m, -2,9 pp a 24 m)                                  → desactivado
-ACTIVOS = ("lynch_p",)
+# «calidad_g» = grandes (> 5.000 M$) que pasan el cribado de calidad, las 15 de mejor nota:
+#   +2,4 / +6,3 / +5,7 pp sobre el S&P 500 a 12 / 24 / 36 m (IC 90 % por encima de 0) y
+#   +3,9 / +9,8 pp sobre las grandes a partes iguales                       → ACTIVO, en prueba
+#   (calidad + más baratas y la fórmula mágica de Greenblatt NO batieron al S&P 500)
+ACTIVOS = ("lynch_p", "calidad_g")
 
 INFO = {
     "corto": {
@@ -87,14 +91,23 @@ INFO = {
             "comparan con el S&P 500."),
     },
     "lynch_p": {
-        "nombre": "Peter Lynch · pequeñas",
-        "horizonte": "1–3 años",
-        "etiqueta": "Lynch pequeñas",
+        "nombre": "Pequeñas · Peter Lynch + calidad",
+        "horizonte": "",
+        "etiqueta": "Pequeñas",
         "descripcion": (
             "Las mismas reglas de Peter Lynch en empresas de 300 a 5.000 M$ (el terreno del "
             "Russell 2000, con el que se comparan), y que además pasan el cribado de calidad del bot. "
             "Lynch buscaba aquí sus mejores ideas: empresas pequeñas que crecen rápido y que aún "
             "pocos siguen. Más volátiles que las grandes."),
+    },
+    "calidad_g": {
+        "nombre": "Grandes · calidad",
+        "horizonte": "",
+        "etiqueta": "Grandes",
+        "descripcion": (
+            "Empresas de más de 5.000 M$ que pasan el cribado de calidad del bot (rentabilidad sobre el "
+            "capital, caja libre, poca deuda, crecimiento y un precio no disparatado). Se comparan con el "
+            "S&P 500."),
     },
     "largo": {
         "nombre": "Compounders",
@@ -120,6 +133,10 @@ class ReglasPaquetes:
     n_lynch_sector: int = 3
     lynch_cap_grande: float = 5_000.0   # M$: frontera grandes / pequeñas
     lynch_con_cribado: bool = True      # además deben pasar el cribado de calidad (la variante probada)
+    n_grandes: int = 15
+    # Cómo se ordenan las grandes que pasan el cribado: "calidad" (nota del cribado),
+    # "calidad_precio" (EBIT / valor de empresa) o "magica" (Greenblatt: ROIC + EBIT/valor de empresa)
+    grandes_variante: str = "calidad"
 
     # --- LARGO: compounders --------------------------------------------- #
     largo_roic_min: float = 15.0        # ROIC medio ≥ 15 %
@@ -150,10 +167,10 @@ class ReglasPaquetes:
 
     def n_de(self, paquete: str) -> int:
         return {"corto": self.n_corto, "medio": self.n_medio, "largo": self.n_largo,
-                "lynch_g": self.n_lynch, "lynch_p": self.n_lynch}[paquete]
+                "lynch_g": self.n_lynch, "lynch_p": self.n_lynch, "calidad_g": self.n_grandes}[paquete]
 
     def sector_de(self, paquete: str) -> int:
-        return self.n_lynch_sector if paquete.startswith("lynch") else self.n_max_sector
+        return self.n_lynch_sector if paquete.startswith(("lynch", "calidad_g")) else self.n_max_sector
 
 
 # --------------------------------------------------------------------------- #
@@ -445,6 +462,17 @@ def criterios(paquete: str, r: ReglasPaquetes | None = None) -> list[str]:
             f"Tamaño {tam}. Se ordenan por puntos (sobre todo PEG; luego deuda, caja, caja libre y recompras). "
             f"Máximo {r.n_lynch} empresas y {r.n_lynch_sector} por sector.",
             "Además pasa el cribado de calidad del bot (rentabilidad del capital, caja, solvencia): es la combinación que se probó.",
+            "Frenos: la IA no la ha descartado, el precio no supera el rango de valor de su tesis y el último trimestre no se ha hundido.",
+        ]
+    if paquete == "calidad_g":
+        orden = {"calidad": "por la nota del cribado (0-100: rentabilidad, márgenes, caja, solvencia, crecimiento y precio)",
+                 "calidad_precio": "de más barata a más cara (beneficio operativo / valor de empresa)",
+                 "magica": "con la «fórmula mágica» de Greenblatt (ROIC + beneficio operativo / valor de empresa)"}[r.grandes_variante]
+        return [
+            f"Más de {r.lynch_cap_grande:,.0f} M$ de capitalización.".replace(",", "."),
+            "Pasa el cribado de calidad del bot: ROIC ≥ 8 %, caja libre positiva al menos 3 de 5 años, ingresos sin caer, "
+            "deuda/patrimonio ≤ 2, intereses cubiertos ≥ 3 veces, sin diluir más de un 15 %, PER ≤ 45 y nota ≥ 55/100.",
+            f"Se ordenan {orden}. Máximo {r.n_grandes} empresas y {r.n_lynch_sector} por sector.",
             "Frenos: la IA no la ha descartado, el precio no supera el rango de valor de su tesis y el último trimestre no se ha hundido.",
         ]
     if paquete == "medio":

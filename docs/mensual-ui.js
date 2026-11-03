@@ -75,10 +75,10 @@
     return { calc, val, valorPos };
   }
 
-  const NOMBRE_PAQ = { corto: "1–3 años", medio: "3–5 años", largo: "5+ años", lynch_g: "Lynch grandes", lynch_p: "Lynch pequeñas", dividendos: "Dividendos" };
+  const NOMBRE_PAQ = { corto: "1–3 años", medio: "3–5 años", largo: "5+ años", lynch_g: "Lynch grandes", lynch_p: "Pequeñas (Lynch)", calidad_g: "Grandes (calidad)", dividendos: "Dividendos" };
   // Paquetes ACTIVOS (los que se enseñan, se miden y se pueden elegir). Los retirados no superaron
   // la prueba histórica: solo se conservan sus nombres para las operaciones antiguas de la cartera.
-  const PAQS_ORDEN = ["lynch_p", "dividendos"];
+  const PAQS_ORDEN = ["lynch_p", "calidad_g", "dividendos"];
   const CON_IWM = ["dividendos", "lynch_p"];      // se comparan con el Russell 2000
   const TIPO_LYNCH = { rapida: "crecimiento rápido", solida: "sólida", lenta: "lenta con dividendo" };
   const PAQS_RETIRADOS = ["corto", "medio", "largo", "lynch_g"];
@@ -116,6 +116,7 @@
     if (k.deuda != null) p.push(k.deuda <= 0 ? "sin deuda neta" : `deuda/EBITDA ${num(k.deuda, 1)}x`);
     if (k.p_fcf != null && k.p_fcf > 0) p.push(`${num(k.p_fcf, 0)}x caja libre`);
     if (k.per != null && k.per > 0) p.push(`PER ${num(k.per, 0)}`);
+    if (k.ev_ebit != null && k.ev_ebit > 0) p.push(`valor/beneficio operativo ${num(k.ev_ebit, 0)}x`);
     return p.join(" · ");
   }
 
@@ -134,8 +135,10 @@
     const r5 = (c.rend || {})["5a"] || (c.rend || {})["3a"];
     const nr5 = (c.rend || {})["5a"] ? "5 años" : "3 años";
     const cagrDiv = dv.cagr_5a != null ? dv.cagr_5a : dv.cagr_3a;
+    const gr = c.grandes || {};
     const subPrecio = esDiv ? (c.cap != null ? `cap. ${num(c.cap, 0)} M$` : "")
       : esLynch ? (ly.cap != null ? `cap. ${num(ly.cap, 0)} M$` : "")
+      : paquete === "calidad_g" ? (gr.cap != null ? `cap. ${num(gr.cap, 0)} M$` : "")
       : (c.descuento != null ? `${signo(-c.descuento * 100, 0)} % vs su mediana 5a` : "");
     return `<article class="m-cand ${abierta ? "abierta" : ""}" data-t="${esc(c.ticker)}">
       <div class="m-cab">
@@ -238,6 +241,8 @@
       h += `<div class="m-aviso"><strong>Paquete retirado:</strong> no superó la prueba histórica. Sale porque este informe es anterior al cambio: lanza el «Recomendador mensual» (GitHub → Actions) para tener el informe nuevo. No compres por él.</div>`;
     } else if (sel === "dividendos") {
       h += `<div class="m-aviso">Esta sección <strong>no se ha podido probar en el pasado</strong> (faltan las empresas que quebraron o salieron del índice, y las cifras históricas de abajo son de supervivientes). Mira «Seguimiento» más abajo antes de poner dinero serio. Ojo fiscal: los dividendos tributan cada año como ahorro (en EE. UU. retienen un 15 % que normalmente puedes descontar), la revalorización solo al vender.</div>`;
+    } else if (sel === "calidad_g") {
+      h += `<div class="m-aviso">Este paquete <strong>sí se ha probado en el pasado</strong> (cuentas tal como se conocían en cada fecha, 2015-2025, ~670 empresas grandes de hoy): las 15 de mejor nota de calidad rindieron <strong>+2,4 puntos más que el S&amp;P 500</strong> a 1 año, +6,3 a 2 años y +5,7 a 3 años, y más que las grandes elegidas sin criterio. Acertó el 48 % de las compras a 1 año (sin criterio, 44 %), pero las que aciertan ganan más de lo que pierden las que fallan. Ventaja modesta: en 2015-2019 quedó empatado con el índice. Faltan las que quebraron: el juez es «Seguimiento», más abajo.</div>`;
     } else if (sel === "lynch_p") {
       h += `<div class="m-aviso">Este paquete <strong>sí se ha probado en el pasado</strong> (cuentas tal como se conocían en cada fecha, 2015-2025, ~1.100 empresas pequeñas de hoy): rindió <strong>+5,9 puntos al año más que el Russell 2000</strong> a 1 año y +14,9 a 2 años, y algo más que elegir sin criterio entre las mismas pequeñas (+1,7 a 1 año, dentro del margen de error; +5,3 a 2 años). Acertó (batió al Russell 2000) el 54 % de las compras a 1 año y el 60 % a 3 años, frente a un 47-48 % sin criterio. Faltan las empresas que quebraron, así que la realidad será algo peor: el juez es «Seguimiento», más abajo.</div>`;
     }
@@ -414,11 +419,12 @@
   function seccionNotas() {
     return `<section class="m-card m-notas"><h2>Cómo funciona esto (y cuánto fiarse)</h2>
       <ul>
-        <li><strong>Qué hay:</strong> dos secciones. <em>Lynch pequeñas</em>: empresas de 300 a 5.000 M$ que cumplen las reglas de Peter Lynch («One Up on Wall Street») y además el cribado de calidad del bot. Y <em>Dividendos</em>: small caps que pagan dividendo sin recortarlo.</li>
+        <li><strong>Qué hay:</strong> tres secciones, por tamaño de empresa (no por años: todo es para largo plazo). <em>Pequeñas</em> (300 a 5.000 M$): las que cumplen las reglas de Peter Lynch («One Up on Wall Street») y además el cribado de calidad del bot. <em>Grandes</em> (más de 5.000 M$): las 15 con mejor nota del cribado de calidad. Y <em>Dividendos</em>: small caps que pagan dividendo sin recortarlo.</li>
         <li><strong>Las reglas de Lynch:</strong> beneficio por acción que crece (20–50 %/año las «rápidas»; 10–20 % las «sólidas» grandes) sin años de pérdidas; PEG ≤ 1 (PER dividido entre el crecimiento: no pagar más de lo que crece; 0,5 es una ganga); deuda/patrimonio ≤ 80 %; inventario que no crece más que las ventas. Lo que Lynch hacía además (hablar con la empresa, conocer el producto, compras de directivos) no está en los números: mira qué hace cada empresa antes de comprar.</li>
-        <li><strong>Lo que dijo la prueba histórica</strong> (2015-2025, cuentas tal como se conocían en cada fecha): en las <em>pequeñas</em> Lynch batió al Russell 2000 (+5,9 puntos al año a 1 año, +14,9 a 2 años) y acertó el 54-60 % de las veces (sin criterio, 47-48 %); a 3 años duplicó el 22 % de las compras y solo el 2 % perdió más de la mitad (sin criterio, 18 % y 10 %). En las <em>grandes</em> NO batió al S&amp;P 500 (−3,7 puntos a 1 año), así que no se ofrece.</li>
-        <li><strong>Qué se ha quitado:</strong> los paquetes de 1–3, 3–5 y 5+ años. Ninguno batió a elegir sin criterio entre las mismas empresas. El de 3–5 años parecía aprobar por poco, pero la prueba tenía un fallo (precios antiguos ajustados por splits que hacían parecer baratas a las futuras ganadoras); corregido, suspende (−1,7 puntos a 1 año). Las compras que ya tengas anotadas con ellos se conservan, marcadas «retirado».</li>
-        <li><strong>Cuánto fiarse:</strong> a la prueba le faltan las empresas que quebraron (sesgo a favor), y el pasado no se repite. Es experimental: el juez es el «Seguimiento» frente al Russell 2000 y tu marcador frente al S&amp;P 500. Dale 12-24 meses con importes que puedas permitirte. Las pequeñas se mueven más que las grandes: espera años malos. Vender por precio rindió peor que el índice: aquí no se manda vender por precio, sino si la empresa deja de cumplir las reglas (tu cartera te avisa).</li>
+        <li><strong>El cribado de calidad:</strong> rentabilidad sobre el capital ≥ 8 %, caja libre positiva, ingresos que no caen, deuda e intereses bajo control, sin diluir al accionista y un PER no disparatado; con todo eso, una nota de 0 a 100.</li>
+        <li><strong>Lo que dijo la prueba histórica</strong> (2015-2025, cuentas tal como se conocían en cada fecha). <em>Pequeñas</em>: Lynch + calidad batió al Russell 2000 (+5,9 puntos a 1 año, +14,9 a 2 años) y acertó el 54-61 % de las veces (sin criterio, 47-48 %); a 3 años duplicó el 22 % de las compras y solo el 2 % perdió más de la mitad. <em>Grandes</em>: la calidad batió al S&amp;P 500 (+2,4 a 1 año, +6,3 a 2 años), con ventaja modesta. Lynch en grandes, «calidad + más baratas» y la «fórmula mágica» de Greenblatt NO batieron al S&amp;P 500, así que no se usan.</li>
+        <li><strong>Qué se ha quitado:</strong> los paquetes por años (1–3, 3–5 y 5+). Ninguno batió a elegir sin criterio entre las mismas empresas. El de 3–5 años parecía aprobar por poco, pero la prueba tenía un fallo (precios antiguos ajustados por splits que hacían parecer baratas a las futuras ganadoras); corregido, suspende (−1,7 puntos a 1 año). Las compras que ya tengas anotadas con ellos se conservan, marcadas «retirado».</li>
+        <li><strong>Cuánto fiarse:</strong> a la prueba le faltan las empresas que quebraron (sesgo a favor), y el pasado no se repite. Es experimental: el juez es el «Seguimiento» (pequeñas frente al Russell 2000, grandes frente al S&amp;P 500) y tu marcador frente al S&amp;P 500. Dale 12-24 meses con importes que puedas permitirte. Las pequeñas se mueven más que las grandes: espera años malos. Vender por precio rindió peor que el índice: aquí no se manda vender por precio, sino si la empresa deja de cumplir las reglas (tu cartera te avisa).</li>
         <li><strong>Dividendos (small caps):</strong> empresas pequeñas del Russell 2000 que pagan dividendo y <em>no lo recortan</em>, con caja que lo cubre, poca deuda y sin diluir. La rentabilidad anual es precio + dividendo y se compara con el Russell 2000. <strong>No está probada en el pasado</strong> (faltan las que quebraron). Si una que tienes recorta o deja de pagar el dividendo, «Mi cartera» la marca como tesis rota. Tu cartera de aquí no suma los dividendos que cobres: llévalos aparte.</li>
         <li>Los análisis de tesis del bot y los chequeos solo pueden quitar o avisar sobre una candidata, nunca añadirla. Las marcadas «sin IA aún» solo han pasado los números.</li>
         <li>Información automática; no es asesoramiento financiero ni fiscal.</li>

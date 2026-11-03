@@ -42,7 +42,7 @@ BENCH_DIV = "IWM"
 # Paquetes que se comparan con el Russell 2000 (IWM) en vez del S&P 500, y que no tienen
 # «universo de control» propio en el informe (el universo del informe es el del cribado de calidad).
 CON_IWM = (PAQ_DIV, "lynch_p")
-SIN_POOL_GENERAL = ("lynch_g", "lynch_p")
+SIN_POOL_GENERAL = ("lynch_g", "lynch_p", "calidad_g")
 
 
 def yahoo(ticker: str) -> str:
