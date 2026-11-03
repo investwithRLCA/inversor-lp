@@ -150,8 +150,8 @@
       </div>
       <div class="m-compra">${hayImporte
         ? (comp > 0
-          ? `Comprar <strong class="num">${usd(comp)}</strong> <span class="m-dim">≈ ${num(redondeaAbajo(comp / c.precio, 2), 2)} acc. · quedaría en el ${pct((((valorPos[c.ticker] || 0) + comp) / totalTras))} de tu cartera mensual</span>`
-          : `<span class="m-dim">Ya pesa el tope en tu cartera mensual: no añadas más.</span>`)
+          ? `Comprar <strong class="num">${usd(comp)}</strong> <span class="m-dim">≈ ${num(redondeaAbajo(comp / c.precio, 2), 2)} acc. · quedaría en el ${pct((((valorPos[c.ticker] || 0) + comp) / totalTras))} de tu cartera</span>`
+          : `<span class="m-dim">Ya pesa el tope en tu cartera: no añadas más.</span>`)
         : `<span class="m-dim">Reparto orientativo: ${pct(c.peso)} del importe</span>`}</div>
       ${esCalidad && c.clave ? `<div class="m-dim m-linea">${esc(lineaClave(c.clave))}</div>` : ""}
       ${esLynch ? `<div class="m-dim m-linea">PER ${num(ly.per, 0)} · beneficio por acción ${signo(ly.crec, 0)} %/año${ly.div ? " · dividendo " + num(ly.div, 1) + " %" : ""}${ly.de != null ? " · deuda/patrimonio " + num(ly.de * 100, 0) + " %" : ""}${ly.caja != null && ly.caja > 0 ? " · caja neta " + num(ly.caja, 0) + " % de lo que vale" : ""}</div>` : ""}
@@ -312,7 +312,7 @@
 
   function seccionCartera() {
     const { calc, val } = valoresPos();
-    let h = `<h2>Mi cartera mensual</h2>`;
+    let h = `<h2>Mi cartera</h2>`;
     if (!val.filas.length) {
       h += `<p class="m-dim">Todavía no hay posiciones. Registra tu primera compra más abajo.</p>`;
       return `<section class="m-card">${h}</section>`;
@@ -368,7 +368,7 @@
     let h = `<h2>Marcador frente al S&amp;P 500</h2>
       <p class="m-dim">Tus mismos flujos de dinero, en las mismas fechas, puestos en el S&amp;P 500 (SPY). Valorado a ${esc(fecha(informe.datos_a))}.</p>
       <table class="m-tabla"><tr><th></th><th>Valor</th><th>Ganancia</th><th>Anual</th></tr>
-      <tr><td>Tu cartera mensual</td><td class="num">${usd(mk.usuario.valor, 0)}</td><td class="num">${signo(mk.usuario.ganancia, 0)} $</td><td class="num">${mk.anualizable ? pct(mk.usuario.xirr, 1) : "—"}</td></tr>
+      <tr><td>Tu cartera</td><td class="num">${usd(mk.usuario.valor, 0)}</td><td class="num">${signo(mk.usuario.ganancia, 0)} $</td><td class="num">${mk.anualizable ? pct(mk.usuario.xirr, 1) : "—"}</td></tr>
       <tr><td>S&amp;P 500</td><td class="num">${usd(mk.spy.valor, 0)}</td><td class="num">${signo(mk.spy.ganancia, 0)} $</td><td class="num">${mk.anualizable ? pct(mk.spy.xirr, 1) : "—"}</td></tr></table>
       <p class="${adelante ? "m-pos" : "m-neg"}"><strong>${adelante ? "Vas por delante" : "Vas por detrás"} del S&amp;P 500 en ${usd(Math.abs(mk.diferencia), 0)}.</strong></p>`;
     if (!mk.anualizable) h += `<p class="m-nota">Llevas menos de 6 meses: la rentabilidad anual aún no significa nada y la diferencia es ruido. Juzga a partir de 12-24 meses.</p>`;
@@ -558,5 +558,6 @@
 
   cargarLocal();
   document.querySelectorAll(".modo").forEach((b) => b.addEventListener("click", () => activarModo(b.dataset.modo)));
-  if (location.hash === "#mensual") activarModo("mensual");
+  // «Este mes» es la vista principal (la de la aportación mensual); «Fichas» (#fichas o #cartera) es la consulta.
+  activarModo(location.hash === "#fichas" || location.hash === "#cartera" ? "cartera" : "mensual");
 })();

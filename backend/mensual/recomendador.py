@@ -33,7 +33,7 @@ Una vez al mes (GitHub Actions) y cuando tú quieras a mano:
 
 LO QUE NO HACE, a propósito:
   · No sabe qué tienes en cartera ni cuánto dinero vas a meter: eso es privado,
-    se queda en tu móvil (pestaña «Mensual» del Vigía) y allí se calcula cuánto
+    se queda en tu móvil (pestaña «Este mes» del Vigía) y allí se calcula cuánto
     comprar de cada una y qué revisar.
   · No manda vender por precio. El backtest mostró que las tres reglas de venta
     por precio probadas pierden frente al S&P 500; solo se marca como «muy
@@ -794,7 +794,7 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
     if inf["avisos"]:
         A("")
     if url_dashboard:
-        A(f"👉 [Abrir el Vigía → pestaña Mensual]({url_dashboard}) para ver cuánto comprar con tu "
+        A(f"👉 [Abrir el Vigía → «Este mes»]({url_dashboard}) para ver cuánto comprar con tu "
           "importe, elegir paquete y revisar tu cartera.\n")
     A("_Información automática, no asesoramiento financiero. Los paquetes que no superaron la prueba "
       "histórica (1–3, 3–5 y 5+ años, y Lynch en grandes) están desactivados; los que quedan se ponen a "

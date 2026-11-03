@@ -10,7 +10,7 @@ name: Recomendador mensual
 # finalistas por frenos (valor de la tesis, último trimestre publicado), mide
 # cuánto rindieron las elecciones de los meses anteriores frente al S&P 500 (y
 # los dividendos frente al Russell 2000), guarda el informe en Supabase para la
-# pestaña «Mensual» del Vigía y abre un Issue.
+# pestaña «Este mes» del Vigía y abre un Issue.
 #
 # Lanzarlo a mano: pestaña "Actions" → "Recomendador mensual" → "Run workflow".
 #

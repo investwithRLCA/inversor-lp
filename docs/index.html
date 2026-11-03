@@ -336,7 +336,7 @@
   }
   .error { color: var(--brick); }
 
-  /* ---------- selector de vista: Cartera | Mensual ---------- */
+  /* ---------- selector de vista: Este mes (mensual) | Fichas (cartera) ---------- */
 
   .modos { display: flex; gap: 0; margin-bottom: 12px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--ink-2); padding: 3px; }
   .modo {
@@ -433,8 +433,8 @@
     <div class="estado" id="estado">cargando…</div>
   </div>
   <div class="modos" role="tablist" aria-label="Vista">
-    <button class="modo" data-modo="cartera" aria-pressed="true">Cartera</button>
-    <button class="modo" data-modo="mensual" aria-pressed="false">Mensual</button>
+    <button class="modo" data-modo="mensual" aria-pressed="true" title="Qué comprar con tu aportación de este mes, tu cartera y el marcador">Este mes</button>
+    <button class="modo" data-modo="cartera" aria-pressed="false" title="Las fichas de todas las empresas que ha analizado el bot">Fichas</button>
   </div>
   <div id="barra-cartera">
     <div class="tabs" role="tablist" aria-label="Filtrar por veredicto">
@@ -763,7 +763,7 @@ async function cargar() {
       return (b.nota_fundamental ?? 0) - (a.nota_fundamental ?? 0);
     });
 
-    $estado.textContent = `${datos.length} empresa${datos.length === 1 ? '' : 's'}`;
+    if (!$lista.hidden) $estado.textContent = `${datos.length} empresa${datos.length === 1 ? '' : 's'}`;
     cargado = true;
     pintar();
   } catch (err) {
@@ -776,8 +776,8 @@ async function cargar() {
 cargar();
 cargarMercados();
 </script>
-<script src="mensual.js?v=6"></script>
-<script src="mensual-ui.js?v=6"></script>
+<script src="mensual.js?v=7"></script>
+<script src="mensual-ui.js?v=7"></script>
 
 </body>
 </html>

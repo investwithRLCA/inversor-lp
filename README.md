@@ -118,7 +118,7 @@ clave nueva).
 
 ## Filtro por mercado en el Vigía
 
-En la vista **Cartera** del Vigía, debajo de *Todas / Comprar / Vigilar / Descartadas*, hay una
+En la pestaña **Fichas** del Vigía (las empresas analizadas por el bot), debajo de *Todas / Comprar / Vigilar / Descartadas*, hay una
 fila para filtrar por mercado: **S&P 500, Nasdaq-100, Russell 2000, S&P 400, S&P 600, bolsa
 Nasdaq, bolsa NYSE** y **Fuera de índices**. Se combina con el veredicto y con la búsqueda, cada
 botón muestra cuántas empresas hay, el elegido se recuerda, y cada tarjeta lleva sus etiquetas
@@ -153,7 +153,7 @@ One Up on Wall Street-Inspired Screening Strategy»):
   de fondos, nº de analistas y, sobre todo, la «historia» del negocio. Eso queda para la IA y para ti.
 
 El bot guarda la evaluación con cada cribado (`quant_screens.breakdown → lynch`). Con la
-migración `db/007_lynch.sql` aplicada, el Vigía la enseña en cada empresa («✓ Pasa el filtro Lynch»
+migración `db/007_lynch.sql` aplicada, el Vigía la enseña en cada ficha («✓ Pasa el filtro Lynch»
 o por qué no) y añade el botón **✓ Lynch** para filtrar.
 
 ### La prueba histórica por tamaño (`prueba-lynch.yml`)
@@ -200,6 +200,13 @@ empresa). Si en un grupo aprueban varios, se queda el de mayor exceso frente al 
   versión de esta prueba daba aprobado también en grandes; corregida (`pit.factor_splits`), no.
 
 ## Módulo mensual de oportunidades (experimental)
+
+**Las dos pestañas del Vigía.** *Este mes* (la que se abre por defecto) es la de tu aportación
+mensual: qué comprar en cada sección, cuánto de cada una con tu importe, tus operaciones («Mi
+cartera»), el marcador frente al S&P 500 y el seguimiento. *Fichas* es la consulta: cada empresa que
+el bot ha analizado con IA (veredicto, informe, rango de valor, filtro Lynch, mercado). Lo que manda
+para comprar es *Este mes* (lo que aprobó la prueba histórica); las fichas sirven para entender la
+empresa antes de comprarla. Los veredictos de la IA no se pueden probar en el pasado.
 
 Complemento del bot de largo plazo, pensado para ir **mes a mes**: tú decides cuánto dinero
 metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones**. Es un modelo
@@ -283,7 +290,7 @@ paquete de 1–3 años **no pasó** los criterios fijados antes de ver los resul
    bonito) frente al S&P 500 y frente al «resto del universo» (todas las elegibles de ese mes a partes
    iguales); Pequeñas y Dividendos, frente al Russell 2000; Grandes, frente al S&P 500.
 6. Guarda el informe en Supabase (`mensual_informes`) y abre un Issue con las elegidas.
-7. La pestaña **Mensual** del Vigía lee ese informe: eliges paquete, escribes cuánto vas a invertir y
+7. La pestaña **Este mes** del Vigía (la que se abre por defecto) lee ese informe: eliges paquete, escribes cuánto vas a invertir y
    reparte a partes iguales con tope por empresa (lo que no cabe NO se fuerza: se guarda para el mes
    siguiente). Las compras se etiquetan con su paquete y ves el resultado por horizonte.
 
@@ -296,7 +303,7 @@ paquete de 1–3 años **no pasó** los criterios fijados antes de ver los resul
 
 Este repositorio es público, así que el informe, el Issue y los logs contienen **solo datos de
 empresas**. Tus compras, importes y posiciones se guardan únicamente en el `localStorage` de tu
-navegador (pestaña Mensual → «Registrar operación»), con botones de exportar/importar copia. Allí
+navegador (pestaña Este mes → «Registrar operación»), con botones de exportar/importar copia. Allí
 mismo se calculan, sin enviar nada: el reparto de tu importe, el estado de cada posición (tesis
 rota, peso, revisión a los 24 meses), el impuesto estimado de vender (FIFO, aproximado), el aviso de
 la regla de los 2 meses y el marcador frente al S&P 500.
@@ -317,7 +324,7 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `backend/mensual/salud.py` | Chequeo del último trimestre (EDGAR, gratis). |
 | `backend/mensual/explicacion.py` | «¿Por qué ha caído?»: titulares + Gemini (solo lo usaba el paquete 1–3 años, hoy retirado). |
 | `db/006_mensual.sql` | Tabla del informe y vista pública de solo lectura (aplicar en el SQL Editor de Supabase). |
-| `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Mensual. |
+| `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Este mes. |
 | `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano. |
 | `.github/workflows/prueba-paquetes.yml` | Prueba histórica de los paquetes con cuentas de cada fecha (a mano; informe en *Summary*). |
 | `backend/lynch.py` | Filtro Peter Lynch (puro, sin red): categoría, PEG, deuda, inventario, puntos; `con_precio` lo rehace con el precio de hoy. |
@@ -330,7 +337,7 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `.github/workflows/backtest-mensual.yml` | Repite la prueba histórica a mano (informe en *Summary*; zip en *Artifacts*). |
 
 **Para activarlo:** (1) pega `db/006_mensual.sql` en Supabase → SQL Editor → Run; (2) pestaña
-*Actions* → *Recomendador mensual* → *Run workflow*; (3) abre el Vigía → *Mensual*.
+*Actions* → *Recomendador mensual* → *Run workflow*; (3) abre el Vigía → *Este mes*.
 
 **Fuente de precios.** Yahoo Finance vía `yfinance`: gratis y con ~20 años de histórico, pero no es
 oficial y a veces bloquea las IPs de GitHub Actions. Si pasa, no se genera informe y el log lo dice
