@@ -5,11 +5,12 @@ name: Barrido de descubrimiento
 # Para mantener al día las que YA tienen un análisis guardado, ver
 # refresco.yml — es una cola totalmente aparte.
 #
-# Nov-2026: GitHub dejaba caer casi todas las ejecuciones programadas «en
-# punto» (solo salía ~1 al día de 6). Ahora va cada 2 horas en un minuto poco
-# concurrido, con lotes de 400 y prioridad a las empresas de índices (ver
-# run_universo.py). Lo que pasa el cribado y no cabe en el cupo de IA queda
-# en cola para la siguiente ejecución.
+# Nov-2026: GitHub dispara muy pocas ejecuciones programadas en este repositorio
+# (a veces una al día). Por eso cada ejecución hace bastante: lote de 400 con
+# prioridad a las empresas de índices (ver run_universo.py; con repasar cada
+# 45 días basta ~1 ejecución al día), hasta 60 análisis de IA (la cola de lo que
+# pasó el cribado y no cupo antes; si Gemini se queda sin cupo, para y lo deja
+# en cola) y, al final, el refresco de las tesis ya analizadas.
 
 on:
   schedule:
@@ -23,7 +24,7 @@ on:
       max_ia:
         description: "Máximo de llamadas a la IA en esta ejecución"
         required: false
-        default: "25"
+        default: "60"
       solo_cribado:
         description: "Solo cribar, sin llamar a la IA"
         type: boolean
@@ -70,7 +71,23 @@ jobs:
         run: >
           python run_universo.py
           --lote ${{ github.event.inputs.lote || '400' }}
-          --max-ia ${{ github.event.inputs.max_ia || '25' }}
+          --max-ia ${{ github.event.inputs.max_ia || '60' }}
           ${{ (github.event.inputs.solo_cribado == 'true') && '--solo-cribado' || '' }}
           --ronda-dias ${{ github.event.inputs.ronda_dias || '45' }}
           ${{ (github.event.inputs.solo_estado == 'true') && '--estado' || '' }}
+
+      # GitHub dispara muy pocas ejecuciones programadas en este repositorio (a veces
+      # una al día) y refresco.yml casi nunca salta solo: por eso cada barrido refresca
+      # también las tesis ya analizadas. Si no hay datos nuevos es gratis (caché).
+      - name: Refrescar las empresas ya analizadas
+        if: ${{ github.event.inputs.solo_estado != 'true' && github.event.inputs.solo_cribado != 'true' }}
+        continue-on-error: true
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python refrescar.py --limite 30
