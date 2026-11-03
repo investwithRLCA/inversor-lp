@@ -152,7 +152,7 @@ def sembrar(repo: Repo) -> int:
     return len(filas)
 
 
-def siguiente_lote(repo: Repo, tamaño: int) -> list[dict]:
+def siguiente_lote(repo: Repo, tamaño: int, ronda_dias: int = RONDA_INDICES_DIAS) -> list[dict]:
     campos = "ticker, cik, nombre, veces_intentado, ultimo_intento"
     prioridad = tickers_prioritarios()
     prioritarias: list[dict] = []
@@ -167,7 +167,7 @@ def siguiente_lote(repo: Repo, tamaño: int) -> list[dict]:
         .limit(tamaño)
         .execute()
     )
-    lote = elegir_lote(prioritarias, res.data or [], tamaño, datetime.now(timezone.utc))
+    lote = elegir_lote(prioritarias, res.data or [], tamaño, datetime.now(timezone.utc), ronda_dias)
     n_idx = sum(1 for f in lote if f["ticker"] in set(prioridad))
     print(f"Lote: {len(lote)} tickers ({n_idx} de índices; {len(prioridad)} empresas de índice en la lista).")
     return lote
@@ -246,6 +246,8 @@ def main() -> None:
                      help="cuántos, como máximo, llegan a la IA en esta ejecución")
     ap.add_argument("--solo-cribado", action="store_true", help="ningún ticker llega a la IA")
     ap.add_argument("--estado", action="store_true", help="solo muestra cómo va el barrido")
+    ap.add_argument("--ronda-dias", type=int, default=RONDA_INDICES_DIAS,
+                     help="repasar las empresas de índice vistas hace más de N días (0 = todas otra vez)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -262,7 +264,7 @@ def main() -> None:
         estado(repo)
         return
 
-    lote = siguiente_lote(repo, args.lote)
+    lote = siguiente_lote(repo, args.lote, args.ronda_dias)
     if not lote:
         print("universe_progreso está vacío. Ejecuta primero: python run_universo.py --sembrar")
         return

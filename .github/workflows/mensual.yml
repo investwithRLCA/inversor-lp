@@ -2,10 +2,11 @@ name: Recomendador mensual
 
 # Una vez al mes (día 1) — y cuando tú quieras a mano — toma TODAS las empresas
 # que han pasado el cribado de calidad del bot (cientos, no solo las que tienen
-# análisis de IA) y arma el paquete de 3–5 años (calidad a precio razonable) y la
-# sección de small caps con dividendo que no recorta. Los paquetes de 1–3 y de
-# 5+ años están DESACTIVADOS: no pasaron la prueba histórica (workflow «Prueba
-# histórica de los paquetes»; ver backend/mensual/paquetes.py). Pasa las
+# análisis de IA) y arma el paquete Peter Lynch de pequeñas (300–5.000 M$, el
+# único que aprobó la prueba histórica) y la sección de small caps con dividendo
+# que no recorta. Los paquetes de 1–3, 3–5 y
+# 5+ años y Lynch en grandes están DESACTIVADOS: no pasaron la prueba histórica
+# (workflows «Prueba histórica de los paquetes» y «… del filtro Lynch»). Pasa las
 # finalistas por frenos (valor de la tesis, último trimestre publicado), mide
 # cuánto rindieron las elecciones de los meses anteriores frente al S&P 500 (y
 # los dividendos frente al Russell 2000), guarda el informe en Supabase para la
@@ -111,8 +112,9 @@ jobs:
             const paq = inf.paquetes || {};
             const nDiv = inf.dividendos && inf.dividendos.candidatas ? inf.dividendos.candidatas.length : null;
             let titulo;
-            if (paq.medio || paq.largo) {
-              const etiquetas = [['corto', '1–3 años'], ['medio', '3–5 años'], ['largo', '5+ años']];
+            if (paq.medio || paq.largo || paq.lynch_g || paq.lynch_p) {
+              const etiquetas = [['corto', '1–3 años'], ['medio', '3–5 años'], ['largo', '5+ años'],
+                                 ['lynch_g', 'Lynch grandes'], ['lynch_p', 'Lynch pequeñas']];
               const partes = etiquetas.filter(([k]) => paq[k]).map(([k, e]) => `${e} ${paq[k].candidatas.length}`);
               if (nDiv != null) partes.push(`dividendos ${nDiv}`);
               titulo = `📅 ${inf.mes}: ${partes.join(' · ')}`;

@@ -11,15 +11,16 @@ Una vez al mes (GitHub Actions) y cuando tú quieras a mano:
      IA). Las que la IA ya analizó y rechazó (NO_INVERTIBLE, DESCARTE) se
      quitan; a las que no tienen análisis aún se les avisa de ello («solo
      cribado»).
-  2. Descarga sus precios (Yahoo, gratis) y arma los paquetes por horizonte que
-     están ACTIVOS (`paquetes.ACTIVOS`). Hoy solo «medio»: la prueba histórica
-     (workflow «Prueba histórica de los paquetes») dejó fuera a «corto» y
-     «largo» porque no superaron a una selección sin criterio del mismo listado.
-       · corto  (1–3 años): baratas frente a su propio rango de 5 años.   [desactivado]
-       · medio  (3–5 años): calidad a precio razonable.                    [ACTIVO]
-       · largo  (5+ años):  compounders (rentabilidad, crecimiento, caja). [desactivado]
-     Máx. 2 por sector en cada paquete. Aparte, la sección de small caps con
-     dividendo (`dividendos.py`).
+  2. Descarga sus precios (Yahoo, gratis) y arma los paquetes que están ACTIVOS
+     (`paquetes.ACTIVOS`). Las pruebas históricas (workflows «Prueba histórica de
+     los paquetes» y «… del filtro Lynch», con el precio corregido por splits)
+     dejaron solo uno:
+       · corto   (1–3 años): baratas frente a su propio rango de 5 años.   [desactivado]
+       · medio   (3–5 años): calidad a precio razonable.                    [desactivado]
+       · largo   (5+ años):  compounders (rentabilidad, crecimiento, caja). [desactivado]
+       · lynch_g Peter Lynch en grandes (> 5.000 M$).                       [desactivado]
+       · lynch_p Peter Lynch en pequeñas (300–5.000 M$) + cribado.          [ACTIVO]
+     Aparte, la sección de small caps con dividendo (`dividendos.py`).
   3. Pasa las finalistas por frenos que SOLO pueden quitar o avisar, nunca
      añadir:  (a) precio por encima del rango de valor de la tesis,
      (b) chequeo del último trimestre publicado (ingresos y margen),
@@ -57,6 +58,7 @@ import numpy as np
 import pandas as pd
 
 from . import paquetes as pq
+from lynch import con_precio as lynch_con_precio
 from . import seguimiento as sg
 from .estrategia import Params, decidir_ventas, elegir_candidatas, senales
 from .paquetes import ReglasPaquetes
@@ -246,7 +248,7 @@ def generar_informe(
             "quant": _num(f.get("quant_score"), 1),
         }
 
-    def recorrer(paquete, orden, n_max, evals=None, post=None):
+    def recorrer(paquete, orden, n_max, evals=None, post=None, max_sector=None):
         """Recorre `orden` (mejor a peor) aplicando n_max, tope por sector,
         precio sobre el rango de valor de la tesis y el freno propio del
         paquete (`post`: devuelve el motivo del veto o None)."""
@@ -254,6 +256,7 @@ def generar_informe(
         vetadas: list[dict] = []
         en_espera: list[dict] = []
         cuenta_sector: dict[int, int] = {}
+        tope_sector = reglas.n_max_sector if max_sector is None else max_sector
         for k in orden:
             c = cols[int(k)]
             if c not in por_col:
@@ -269,10 +272,10 @@ def generar_informe(
                     en_espera.append({"ticker": reg["ticker"], "motivo": f"cumple, pero fuera de las {n_max} mejores"})
                 continue
             s_cod = int(sector_col[int(k)])
-            if reglas.n_max_sector > 0 and s_cod >= 0 and cuenta_sector.get(s_cod, 0) >= reglas.n_max_sector:
+            if tope_sector > 0 and s_cod >= 0 and cuenta_sector.get(s_cod, 0) >= tope_sector:
                 if len(en_espera) < MAX_EN_ESPERA:
                     en_espera.append({"ticker": reg["ticker"],
-                                      "motivo": f"cumple, pero ya hay {reglas.n_max_sector} de su sector"})
+                                      "motivo": f"cumple, pero ya hay {tope_sector} de su sector"})
                 continue
             if reg["valor_max"] and reg["precio"] > reg["valor_max"]:
                 vetadas.append({"ticker": reg["ticker"], "motivo":
@@ -348,6 +351,45 @@ def generar_informe(
         resultado[paquete] = recorrer(paquete, [pos[c] for c in orden], reglas.n_de(paquete),
                                       evals=evals, post=post_calidad)
 
+    # ===================== paquetes PETER LYNCH (grandes y pequeñas) ============= #
+    def post_lynch(reg, c):
+        if reg["veredicto"] in RECHAZADAS:
+            return f"la IA la descartó en su análisis ({reg['veredicto'].replace('_', ' ')})"
+        reg["salud"] = f_salud(reg["ticker"]) if f_salud else None
+        if reg["salud"] and reg["salud"].get("deterioro"):
+            return "último trimestre con deterioro: " + "; ".join(reg["salud"].get("avisos") or [])
+        if reg.get("tier") == "A" and f_tesis_texto:
+            reg["tesis"] = f_tesis_texto(reg["ticker"])
+        return None
+
+    lynch_paqs = [x for x in ("lynch_g", "lynch_p") if x in activos]
+    if lynch_paqs:
+        evals_l: dict[str, dict[str, dict]] = {"lynch_g": {}, "lynch_p": {}}
+        for k, c in enumerate(cols):
+            f = por_col.get(c)
+            if not f or not f.get("lynch"):
+                continue
+            if reglas.lynch_con_cribado and not f.get("pasa_cribado"):
+                continue                     # la variante probada exige también el cribado de calidad
+            precio = float(sen["precio"].iloc[k])
+            if not np.isfinite(precio) or precio <= 0:
+                continue
+            ev = lynch_con_precio(f["lynch"], precio)
+            if not ev or not ev["pasa"] or ev.get("cap") is None:
+                continue
+            grupo = "lynch_g" if ev["cap"] >= reglas.lynch_cap_grande else "lynch_p"
+            evals_l[grupo][c] = {
+                "puntos": ev["puntos"],
+                "lynch": {kk: ev[kk] for kk in ("cat", "per", "peg", "peg_div", "peg_usado", "crec", "div", "cap", "de", "caja")},
+                "razones": _razones_lynch(f["lynch"], ev),
+            }
+        for paquete in lynch_paqs:
+            ev_p = evals_l[paquete]
+            orden = sorted(ev_p, key=lambda c: (-ev_p[c]["puntos"], c))
+            n_aptas[paquete] = len(orden)
+            resultado[paquete] = recorrer(paquete, [pos[c] for c in orden], reglas.n_de(paquete),
+                                          evals=ev_p, post=post_lynch, max_sector=reglas.sector_de(paquete))
+
     if "corto" in activos and estado_ia["agotada"]:
         avisos.append(f"Se agotó el límite de {max_ia} análisis de IA: las últimas candidatas del "
                       "paquete corto van sin explicación de la IA.")
@@ -374,6 +416,8 @@ def generar_informe(
              "td": _dias_desde(fila.get("analizado_el"), hoy)}
         if fila.get("pasa_cribado") is False:
             e["qp"] = False                      # ya no pasa el cribado cuantitativo
+        if fila.get("lynch"):
+            e["ly"] = "no"                       # filtro Lynch: ok | precio (solo falla por caro) | no
         k = pos.get(y)
         if k is None or not np.isfinite(sen["precio"].iloc[k]):
             e["e"] = "sin_datos"
@@ -383,6 +427,9 @@ def generar_informe(
                 np.array([True]), np.array([precio]), np.array([float(sen["mediana"].iloc[k])]),
                 np.array([float(sen["percentil"].iloc[k])]), np.array([False]), np.array([0.0]),
                 dataclasses.replace(p, venta="cara", vender_por_tiempo=False))[0] > 0)
+            if fila.get("lynch"):
+                ev = lynch_con_precio(fila["lynch"], precio)
+                e["ly"] = "no" if ev is None else ("ok" if ev["pasa"] else "precio")
             e.update({"p": _num(precio, 2), "m": _num(sen["mediana"].iloc[k], 2),
                       "d": _num(desc[k], 3), "q": _num(pct[k], 3), "r": _num(reb[k], 3),
                       "c": cara,
@@ -446,8 +493,23 @@ def generar_informe(
     return informe
 
 
+def _razones_lynch(guardado: dict, ev: dict) -> list[str]:
+    """Razones de la evaluación guardada, con el PEG y el PER de hoy."""
+    cat = {"rapida": "Crecimiento rápido («fast grower»)", "solida": "Empresa sólida («stalwart»)",
+           "lenta": "Crecimiento lento con buen dividendo («slow grower»)"}.get(ev["cat"], "")
+    peg_nombre = "PEG" if ev["cat"] == "rapida" else "PEG con dividendo"
+    out = [f"{cat}: el beneficio por acción ha crecido un {ev['crec']:.0f} % al año, sin años de pérdidas.",
+           f"{peg_nombre} {ev['peg_usado']:.2f} al precio de hoy (PER {ev['per']:.0f}): "
+           + ("una ganga según Lynch (≤ 0,5)." if ev["peg_usado"] <= 0.5 else "precio razonable para lo que crece (≤ 1).")]
+    out += [r for r in (guardado.get("razones") or [])[2:]]
+    return out
+
+
 def _avisos_candidata(reg: dict) -> list[str]:
     a: list[str] = []
+    if reg.get("paquete", "").startswith("lynch") and reg["veredicto"] == "SIN_TESIS":
+        a.append("Aún sin análisis de IA de su tesis: solo pasa el filtro Lynch (los números). "
+                 "Mira qué hace la empresa y por qué crece antes de comprar: Lynch pedía entender la «historia».")
     if reg.get("tier") == "B":
         a.append("Aún sin análisis de IA de su tesis: solo ha pasado el cribado cuantitativo "
                  "(calidad, caja, solvencia). Léela con más cautela y mira su ficha antes de comprar.")
@@ -552,7 +614,34 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
         if any("parte alta de su rango" in av for c in P["candidatas"] for av in c.get("avisos", [])):
             A("_Varias cotizan en la parte alta de su rango de 5 años (normal en negocios que crecen "
               "mucho): si compras, mejor escalonado en varios meses._\n")
-    if cands or any((paq.get(k) or {}).get("candidatas") for k in ("medio", "largo")) or (inf.get("dividendos") or {}).get("candidatas"):
+    for clave, titulo, ref in (("lynch_g", "### 🔭 Peter Lynch · grandes (> 5.000 M$)\n", "S&P 500"),
+                               ("lynch_p", "### 🔭 Peter Lynch · pequeñas (300–5.000 M$)\n", "Russell 2000")):
+        P = paq.get(clave)
+        if not P:
+            continue
+        A(titulo)
+        if not P["candidatas"]:
+            A(f"Ninguna empresa cumple hoy las reglas de Lynch en este tamaño ({P['n_aptas']} aptas antes de los frenos).\n")
+            continue
+        A("| Empresa | Precio | Puntos | Tipo | Crec. BPA | PER | PEG | Deuda/patrimonio | Nivel |")
+        A("|---|---:|---:|---|---:|---:|---:|---:|---|")
+        tipos = {"rapida": "rápida", "solida": "sólida", "lenta": "lenta"}
+        for c in P["candidatas"]:
+            ly = c.get("lynch") or {}
+            nivel = c["veredicto"].replace("_", " ") if c["veredicto"] != "SIN_TESIS" else "sin IA aún"
+            de = ly.get("de")
+            A(f"| **{c['ticker']}** · {c['nombre']} | {c['precio']:.2f} | {c['puntos']:.0f} | {tipos.get(ly.get('cat'), '—')} | "
+              f"{ly.get('crec', 0):.0f} % | {ly.get('per', 0):.0f} | {ly.get('peg_usado', 0):.2f} | "
+              f"{'—' if de is None else format(de * 100, '.0f') + ' %'} | {nivel} |")
+        A("")
+        extra = [f"- ⚠️ **{c['ticker']}**: {av}" for c in P["candidatas"] for av in c.get("avisos", [])
+                 if "solo pasa el filtro Lynch" not in av]
+        if extra:
+            L.extend(extra)
+            A("")
+        A(f"_Se comparan con el {ref}. Las marcadas «sin IA aún» solo han pasado los números: "
+          "mira qué hace la empresa antes de comprar._\n")
+    if cands or any((paq.get(k) or {}).get("candidatas") for k in ("medio", "largo", "lynch_g", "lynch_p")) or (inf.get("dividendos") or {}).get("candidatas"):
         A("**Reparto orientativo:** a partes iguales dentro de cada paquete, con tope por empresa. "
           "Cuánto compras de cada una depende de tu importe y de lo que ya tengas: "
           "se calcula en tu móvil.\n")
@@ -595,14 +684,14 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
     if seg:
         A("### 🔎 ¿Están funcionando los paquetes? (seguimiento automático)\n")
         mad = False
-        for clave in ("corto", "medio", "largo", "dividendos"):
+        for clave in ("corto", "medio", "largo", "lynch_g", "lynch_p", "dividendos"):
             s = (seg.get("resumen") or {}).get(clave) or {}
             if s.get("cohortes_maduras"):
                 mad = True
                 sup = f"{s['superan_spy']}/{s['cohortes_maduras']}"
                 etiqueta = "Dividendos" if clave == "dividendos" else pq.INFO[clave]["etiqueta"]
                 A(f"- **{etiqueta}**: {s['cohortes_maduras']} cohorte(s) con ≥3 meses; "
-                  f"exceso medio sobre {'el Russell 2000' if clave == 'dividendos' else 'el S&P 500'} {_pp(s['exceso_medio'])} "
+                  f"exceso medio sobre {'el Russell 2000' if clave in ('dividendos', 'lynch_p') else 'el S&P 500'} {_pp(s['exceso_medio'])} "
                   f"(superó al índice en {sup})"
                   + (f"; sobre el resto del universo {_pp(s['exceso_medio_pool'])}" if s.get("exceso_medio_pool") is not None else "")
                   + ".")
@@ -618,8 +707,8 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
         A(f"👉 [Abrir el Vigía → pestaña Mensual]({url_dashboard}) para ver cuánto comprar con tu "
           "importe, elegir paquete y revisar tu cartera.\n")
     A("_Información automática, no asesoramiento financiero. Los paquetes que no superaron la prueba "
-      "histórica (1–3 y 5+ años) están desactivados; los que quedan se ponen a prueba en vivo con el "
-      "seguimiento de arriba. El marcador del Vigía compara tu resultado real con el S&P 500._")
+      "histórica (1–3, 3–5 y 5+ años, y Lynch en grandes) están desactivados; los que quedan se ponen a "
+      "prueba en vivo con el seguimiento de arriba. El marcador del Vigía compara tu resultado real con el S&P 500._")
     return "\n".join(L)
 
 
@@ -667,7 +756,7 @@ def cargar_universo(repo) -> list[dict]:
     filas: dict[str, dict] = {}
     for r in _paginas(lambda a, b: (
             repo.db.table("quant_screens")
-            .select("id,score,created_at,companies(ticker,name,sector,is_financial,active),"
+            .select("id,score,created_at,breakdown,companies(ticker,name,sector,is_financial,active),"
                     "fundamentals_snapshots(metrics,as_of)")
             .eq("passed", True).order("created_at", desc=True).order("id").range(a, b).execute())):
         if r["id"] not in ids_vigentes:
@@ -681,8 +770,33 @@ def cargar_universo(repo) -> list[dict]:
         filas[t] = {"ticker": t, "name": c.get("name") or "", "sector": c.get("sector") or "",
                     "es_financiera": bool(c.get("is_financial")), "quant_score": r.get("score"),
                     "metricas": (s or {}).get("metrics"), "pasa_cribado": True,
+                    "lynch": (r.get("breakdown") or {}).get("lynch"),
                     "veredicto_final": None, "precio_entrada": None, "valor_min": None,
                     "valor_max": None, "nota_fundamental": None, "confianza": None, "analizado_el": None}
+
+    # 2b) Las que pasan el filtro Peter Lynch en su ÚLTIMO cribado aunque no pasen el de calidad
+    try:
+        for r in _paginas(lambda a, b: (
+                repo.db.table("quant_screens")
+                .select("id,company_id,score,passed,created_at,breakdown,companies(ticker,name,sector,is_financial,active)")
+                .eq("breakdown->lynch->>pasa", "true").order("created_at", desc=True).order("id").range(a, b).execute())):
+            c = r.get("companies")
+            if not c or c.get("active") is False or not c.get("ticker"):
+                continue
+            ult = ultimas.get(r.get("company_id")) if r.get("company_id") else None
+            if ult is not None and ult[0] != r["id"]:
+                continue                     # no es su cribado más reciente
+            t = c["ticker"]
+            if t in filas:
+                continue
+            filas[t] = {"ticker": t, "name": c.get("name") or "", "sector": c.get("sector") or "",
+                        "es_financiera": bool(c.get("is_financial")), "quant_score": r.get("score"),
+                        "metricas": None, "pasa_cribado": bool(r.get("passed")),
+                        "lynch": (r.get("breakdown") or {}).get("lynch"),
+                        "veredicto_final": None, "precio_entrada": None, "valor_min": None,
+                        "valor_max": None, "nota_fundamental": None, "confianza": None, "analizado_el": None}
+    except Exception as e:  # noqa: BLE001  (sin datos Lynch: el informe sigue sin esos paquetes)
+        log.warning("No se pudieron leer las evaluaciones Lynch: %s", e)
 
     # 3) Superponer el análisis de IA, y añadir las analizadas que ya no pasan el cribado
     for t, f in tesis.items():

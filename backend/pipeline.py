@@ -27,6 +27,7 @@ from typing import Any
 from providers import Fundamentals, build_fundamentals
 from quant_filter import RULESET_VERSION, ScreenResult, build_llm_payload, screen
 from llm_gemini import GEMINI_MODEL, GEMINI_MODEL_FALLBACK, call_gemini
+from lynch import evaluar as evaluar_lynch
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +41,14 @@ MODELOS_CACHE = [GEMINI_MODEL] + (
     [GEMINI_MODEL_FALLBACK] if GEMINI_MODEL_FALLBACK != GEMINI_MODEL else []
 )
 SNAPSHOT_TTL_DAYS = 90
+
+# ¿Pueden llegar a la IA las empresas que pasan el filtro Peter Lynch aunque no pasen
+# el cribado de calidad? La prueba histórica (workflow «Prueba histórica del filtro
+# Lynch», nov-2026) dice: en las pequeñas (300–5.000 M$) el filtro solo batió al
+# Russell 2000 (+6,0 pp a 12 m, +13,6 pp a 24 m); en las grandes NO batió al S&P 500.
+# Así que solo entran por Lynch las pequeñas.
+ENTRADA_LYNCH = True
+LYNCH_CAP_MIN, LYNCH_CAP_MAX = 300.0, 5_000.0     # M$
 
 SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "system_prompt_es.md").read_text(
     encoding="utf-8"
@@ -124,7 +133,7 @@ class Repo:
         return res.data[0]["id"]
 
     # -- screens --------------------------------------------------------- #
-    def save_screen(self, company_id: str, snapshot_id: str, r: ScreenResult) -> str:
+    def save_screen(self, company_id: str, snapshot_id: str, r: ScreenResult, extra: dict | None = None) -> str:
         row = {
             "company_id": company_id,
             "snapshot_id": snapshot_id,
@@ -133,7 +142,7 @@ class Repo:
             "passed": r.passed,
             "vetoes": r.vetoes,
             "warnings": r.warnings,
-            "breakdown": r.breakdown,
+            "breakdown": {**r.breakdown, **(extra or {})},
         }
         res = (
             self.db.table("quant_screens")
@@ -252,11 +261,19 @@ def analyze(ticker: str, repo: Repo, force: bool = False, con_ia: bool = True) -
         h = data_hash(metrics)
 
         snapshot_id = repo.save_snapshot(company_id, f, metrics, h)
-        repo.save_screen(company_id, snapshot_id, r)
+        lynch = _lynch(f)
+        repo.save_screen(company_id, snapshot_id, r, {"lynch": lynch} if lynch else None)
 
-        if not r.passed:
+        entra_por_lynch = (ENTRADA_LYNCH and not r.passed and bool(lynch and lynch.get("pasa"))
+                           and LYNCH_CAP_MIN <= (lynch.get("cap") or 0) < LYNCH_CAP_MAX)
+        if not r.passed and not entra_por_lynch:
             return Outcome(ticker, "rechazo_quant", r.score,
                            detail="; ".join(r.vetoes) or f"score {r.score} bajo el umbral")
+        if entra_por_lynch:
+            # la IA debe saber que no pasa el cribado de calidad y por qué
+            r.warnings = [f"entra por el filtro Peter Lynch ({lynch.get('cat')}, PEG "
+                          f"{lynch.get('peg') if lynch.get('cat') == 'rapida' else lynch.get('peg_div')}); "
+                          f"no pasa el cribado de calidad: {'; '.join(r.vetoes) or f'score {r.score}'}"] + r.warnings
 
         if not force:
             if hit := repo.cached_analysis(company_id, h):
@@ -297,6 +314,16 @@ def analyze(ticker: str, repo: Repo, force: bool = False, con_ia: bool = True) -
     except Exception as e:  # noqa: BLE001
         log.exception("Fallo analizando %s", ticker)
         return Outcome(ticker, "error", detail=str(e))
+
+
+def _lynch(f: Fundamentals) -> dict | None:
+    """Evaluación Peter Lynch para guardar con el cribado. Nunca rompe el embudo."""
+    try:
+        bpa = (f.net_income[-1] / f.shares_diluted[-1]) if (f.net_income and f.shares_diluted and f.shares_diluted[-1]) else None
+        return evaluar_lynch(f).resumen(bpa)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Lynch no evaluable para %s: %s", f.ticker, e)
+        return None
 
 
 def analyze_universe(tickers: list[str], repo: Repo | None = None) -> list[Outcome]:

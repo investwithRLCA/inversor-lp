@@ -134,6 +134,12 @@
   .etq-mercado span { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hairline); color: var(--paper-dim); white-space: nowrap; }
   .etq-mercado span.idx { border-color: var(--brass-dim); color: var(--brass); }
 
+  .tab-lynch[aria-pressed="true"] { background: var(--sage); border-color: var(--sage); color: var(--ink); }
+  .tab-lynch[hidden] { display: none; }
+  .lynch { font-size: 12px; color: var(--slate); margin-top: 6px; line-height: 1.4; }
+  .lynch.ok { color: var(--sage); }
+  .lynch-det { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--paper-dim); }
+
   .buscar {
     width: 100%;
     padding: 10px 14px;
@@ -436,6 +442,7 @@
       <button class="tab" data-filtro="comprar">Comprar</button>
       <button class="tab" data-filtro="vigilar">Vigilar</button>
       <button class="tab" data-filtro="descartadas">Descartadas</button>
+      <button class="tab tab-lynch" id="tab-lynch" aria-pressed="false" hidden title="Solo las que pasan el filtro Peter Lynch">✓ Lynch</button>
     </div>
     <div class="mercados" id="mercados" role="group" aria-label="Filtrar por mercado" hidden></div>
     <input class="buscar" id="buscar" type="search" placeholder="Buscar por ticker o nombre…" autocomplete="off" />
@@ -492,6 +499,39 @@ const NOTA_MERCADO = {
   otros: "No están en ninguno de esos cinco índices: extranjeras que cotizan en EE. UU., recién llegadas a bolsa o fuera de los índices.",
 };
 const CLAVE_MERCADO = "vigia.cartera.mercado";
+const CLAVE_LYNCH = "vigia.cartera.lynch";
+let soloLynch = false;
+try { soloLynch = localStorage.getItem(CLAVE_LYNCH) === "1"; } catch (e) { /* sin almacenamiento */ }
+
+function escHtml(x) {
+  return String(x ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+// Evaluación Peter Lynch guardada con el último cribado (migración 007). null si no hay.
+function lynchDe(fila) {
+  const l = fila && fila.lynch;
+  return l && typeof l === "object" ? l : null;
+}
+const CAT_LYNCH = { rapida: "crecimiento rápido", solida: "sólida («stalwart»)", lenta: "lenta con dividendo" };
+function fmtNum(v, d = 2) {
+  return v === null || v === undefined ? "—" : Number(v).toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function lineaLynch(fila) {
+  const l = lynchDe(fila);
+  if (!l) return "";
+  const peg = l.cat === "rapida" ? l.peg : l.peg_div;
+  if (l.pasa) {
+    return `<div class="lynch ok">✓ Pasa el filtro Lynch · ${CAT_LYNCH[l.cat] || ""} · PEG ${fmtNum(peg)} · BPA ${l.crec > 0 ? "+" : ""}${fmtNum(l.crec, 0)} %/año</div>`;
+  }
+  return `<div class="lynch">Lynch: no pasa — ${escHtml((l.motivos || [])[0] || "")}</div>`;
+}
+function detalleLynch(fila) {
+  const l = lynchDe(fila);
+  if (!l) return "";
+  const lista = (l.pasa ? l.razones : l.motivos) || [];
+  if (!lista.length) return "";
+  return `<div class="etiqueta" style="margin-top:10px">Filtro Peter Lynch${fila.lynch_el ? " · " + fmtFecha(fila.lynch_el) : ""}</div>
+    <ul class="lynch-det">${lista.map(x => `<li>${escHtml(x)}</li>`).join("")}</ul>`;
+}
 let infoMercados = null;          // contenido de mercados.json
 let mercadosDe = new Map();       // ticker → Set de códigos
 let filtroMercado = "todos";
@@ -614,6 +654,7 @@ function tarjeta(fila) {
         <div class="ticker">${fila.ticker}<span class="pill v-${fila.veredicto_final}">${fila.veredicto_final.replace('_',' ')}</span></div>
         <div class="nombre">${fila.name || ''}</div>
         ${etiquetasMercado(fila.ticker)}
+        ${lineaLynch(fila)}
       </div>
     </div>
     <div class="precios">
@@ -631,6 +672,7 @@ function tarjeta(fila) {
     <div class="informe"></div>
     <div class="meta-informe" style="display:none">
       nota ${fila.nota_fundamental ?? '—'}/10 · confianza ${fila.confianza || '—'} · datos a ${fmtFecha(fila.datos_a)} · analizado ${fmtFecha(fila.analizado_el)}
+      ${detalleLynch(fila)}
     </div>
   `;
 
@@ -657,7 +699,11 @@ function pintar() {
   const grupo = GRUPOS[filtroActivo];
   const q = busqueda.trim().toLowerCase();
 
-  const porVeredicto = datos.filter(f => !grupo || grupo.includes(f.veredicto_final));
+  const hayLynch = datos.some(f => lynchDe(f));
+  $tabLynch.hidden = !hayLynch;
+  $tabLynch.setAttribute("aria-pressed", String(soloLynch && hayLynch));
+  const porVeredicto = datos.filter(f => (!grupo || grupo.includes(f.veredicto_final))
+                                      && (!soloLynch || !hayLynch || (lynchDe(f) && lynchDe(f).pasa)));
   pintarMercados(porVeredicto);
   const visibles = porVeredicto.filter(f => {
     if (!enMercado(f, filtroMercado)) return false;
@@ -673,9 +719,16 @@ function pintar() {
   visibles.forEach(f => $lista.appendChild(tarjeta(f)));
 }
 
-document.querySelectorAll(".tab").forEach(btn => {
+const $tabLynch = document.getElementById("tab-lynch");
+$tabLynch.addEventListener("click", () => {
+  soloLynch = !soloLynch;
+  try { localStorage.setItem(CLAVE_LYNCH, soloLynch ? "1" : "0"); } catch (e) { /* sin almacenamiento */ }
+  pintar();
+});
+
+document.querySelectorAll(".tab[data-filtro]").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-pressed", "false"));
+    document.querySelectorAll(".tab[data-filtro]").forEach(b => b.setAttribute("aria-pressed", "false"));
     btn.setAttribute("aria-pressed", "true");
     filtroActivo = btn.dataset.filtro;
     pintar();
@@ -723,8 +776,8 @@ async function cargar() {
 cargar();
 cargarMercados();
 </script>
-<script src="mensual.js?v=4"></script>
-<script src="mensual-ui.js?v=4"></script>
+<script src="mensual.js?v=5"></script>
+<script src="mensual-ui.js?v=5"></script>
 
 </body>
 </html>

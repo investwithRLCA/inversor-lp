@@ -73,9 +73,19 @@ tocar nada:
 
 | Workflow | Qué hace | Cuándo |
 |---|---|---|
-| `barrido.yml` | **Descubrimiento.** Recorre el universo EDGAR (~10.000 tickers) buscando candidatas nuevas, una vez cada una antes de repetir ninguna. | cada 4 horas |
-| `refresco.yml` | **Mantenimiento.** Vuelve a pasar por el embudo a las empresas que YA tienen un análisis guardado, empezando por COMPRA_FUERTE/COMPRA/VIGILAR y por las más antiguas. Casi siempre gratis (caché). | a diario |
+| `barrido.yml` | **Descubrimiento.** Primero las ~2.900 empresas de índices (S&P 500/400/600, Russell 2000, Nasdaq-100; repasadas cada 45 días), luego el resto del universo EDGAR (~10.000 tickers). Lotes de 400; lo que pasa el cribado y no cabe en el cupo de IA queda en cola para la siguiente ejecución. | cada 2 horas (minuto 17) |
+| `refresco.yml` | **Mantenimiento.** Vuelve a pasar por el embudo a las empresas que YA tienen un análisis guardado, empezando por COMPRA_FUERTE/COMPRA/VIGILAR y por las más antiguas. Casi siempre gratis (caché). | a diario (07:23 UTC) |
 | `vigilancia.yml` | Comprueba el precio de las VIGILAR y abre un Issue si alguna cruza su precio de entrada. | cada 2 horas |
+
+**Qué limita cuántas empresas se analizan (nov-2026).** No es la velocidad ni la IA: el barrido
+ya había visto el 93 % de las empresas de índices, pero solo ~1 de cada 10 pasaba el cribado de
+calidad. Para ampliar: el mínimo de capitalización bajó de 1.000 a **300 M$** (`quant_filter.py`,
+ruleset `quant-1.3`; no invalida análisis guardados), y las **pequeñas (300–5.000 M$) que pasan el
+filtro Peter Lynch** llegan a la IA aunque no pasen el cribado de calidad (`pipeline.ENTRADA_LYNCH`;
+ver más abajo por qué solo las pequeñas). `python run_universo.py --estado` (o el input
+`solo_estado` del workflow) muestra cómo va: universo visto, empresas de índices pendientes y cola
+de IA. Las ejecuciones programadas «en punto» se las saltaba GitHub (salía ~1 de 6): por eso van en
+el minuto 17.
 
 **Por qué dos barridos distintos (`barrido.yml` y `refresco.yml`) en vez de uno solo.**
 El descubrimiento recorre ~10.000 tickers por turnos: a una empresa ya analizada podría
@@ -124,57 +134,101 @@ de índice y bolsa.
   (`quant_filter.py`, `min_market_cap`), así que solo llegan a analizarse las small caps más
   grandes del índice (que va de ~150 M$ a ~5.700 M$).
 
+## Filtro Peter Lynch
+
+`backend/lynch.py` lleva a números las reglas de *One Up on Wall Street* (1989), con los umbrales
+de dos codificaciones públicas de su método (Validea, modelo «P/E/Growth Investor»; AAII, «Lynch's
+One Up on Wall Street-Inspired Screening Strategy»):
+
+- **Categoría** por crecimiento del beneficio por acción (BPA), sin ningún año de pérdidas:
+  *rápida* 20–50 %/año (más de 50 % no dura); *sólida* 10–20 % con ventas ≥ 1.000 M$; *lenta*
+  < 10 % solo con ventas ≥ 1.000 M$ y dividendo ≥ 3 %. Cíclicas, *turnarounds* y *asset plays*
+  necesitan juicio: no se eligen aquí.
+- **PEG ≤ 1** (PER ÷ crecimiento; 0,5 = ganga). En sólidas y lentas, PER ÷ (crecimiento + dividendo).
+  Una rápida ya grande, además PER ≤ 40.
+- **Deuda/patrimonio ≤ 80 %**; en bancos y aseguradoras, patrimonio/activos ≥ 5 % y ROA ≥ 1 %.
+- **Inventario** que no crece más que las ventas (+5 puntos como mucho).
+- Puntos 0–100 para ordenar: sobre todo el PEG; luego deuda, caja neta, caja libre, recompras.
+- Lo que Lynch también miraba y **no hay en datos gratuitos**: compras de directivos, % en manos
+  de fondos, nº de analistas y, sobre todo, la «historia» del negocio. Eso queda para la IA y para ti.
+
+El bot guarda la evaluación con cada cribado (`quant_screens.breakdown → lynch`). Con la
+migración `db/007_lynch.sql` aplicada, el Vigía la enseña en cada empresa («✓ Pasa el filtro Lynch»
+o por qué no) y añade el botón **✓ Lynch** para filtrar.
+
+### La prueba histórica del filtro (`prueba-lynch.yml`)
+
+Cada fin de mes desde 2015, con las cuentas **tal como se conocían** (SEC) y ~2.900 empresas (las
+de los índices de hoy), se eligen las 15 con más puntos (máx. 3 por sector) en dos grupos según su
+tamaño ese día: **grandes** (> 5.000 M$, frente al S&P 500) y **pequeñas** (300–5.000 M$, frente al
+Russell 2000). Misma regla fijada de antemano que los paquetes: vale solo si a 12 y 24 meses bate al
+índice y a elegir sin criterio en el mismo grupo.
+
+| Variante | Grupo | Exceso vs índice (12 / 24 m) | Exceso vs grupo (12 / 24 m) | Aciertan* (12 / 24 / 36 m) | Veredicto |
+|---|---|---|---|---|---|
+| Lynch | Pequeñas | +6,0 / +13,6 pp | +1,8 / +3,9 pp | 53 / 56 / 55 % (sin criterio 48 / 47 / 47 %) | ✅ |
+| **Lynch + cribado de calidad** | **Pequeñas** | **+5,9 / +14,9 pp** | **+1,7 / +5,3 pp** | **54 / 58 / 60 %** | ✅ **activo** |
+| Lynch | Grandes | −0,7 / −2,3 pp | +0,7 / +1,2 pp | 43 / 42 / 36 % (sin criterio 44 / 41 / 38 %) | ❌ |
+| Lynch + cribado de calidad | Grandes | −3,7 / −8,9 pp | −2,2 / −5,4 pp | 39 / 38 / 35 % | ❌ |
+
+\* % de compras que batieron a su índice en ese plazo («si eres bueno, aciertas seis de cada diez», Lynch).
+
+- En pequeñas, «Lynch + cribado» a 3 años: el 22 % de las compras duplicó (sin criterio, 18 %) y solo
+  el 2 % perdió más de la mitad (sin criterio, 10 %). Por épocas a 12 m: 2015-19 9,5 % (Russell 7,1 %,
+  grupo 9,7 %), 2020-22 24,7 % (12,2 / 23,1 %), 2023+ 22,2 % (16,9 / 17,2 %).
+- Entre las dos variantes que aprobaron en pequeñas se activa «Lynch + cribado»: mismos excesos,
+  algo más de acierto y la mitad de desastres. Es una elección hecha viendo los resultados: el
+  seguimiento en vivo dirá si se sostiene.
+- Los intervalos de confianza del exceso **frente al grupo** a 12 m incluyen el cero: el filtro bate
+  con claridad al Russell 2000, pero su ventaja sobre elegir sin criterio entre pequeñas de calidad
+  es modesta. Faltan además las que quebraron (sesgo a favor).
+- **Fallo corregido (nov-2026):** el «Close» de Yahoo viene ajustado por splits posteriores; las
+  cuentas de la SEC usan las acciones de entonces. Sin corregir, una empresa que luego hizo un split
+  de 10:1 parecía 10 veces más pequeña y barata (sesgo hacia las futuras ganadoras). La primera
+  versión de esta prueba daba aprobado también en grandes; corregida (`pit.factor_splits`), no.
+
 ## Módulo mensual de oportunidades (experimental)
 
 Complemento del bot de largo plazo, pensado para ir **mes a mes**: tú decides cuánto dinero
 metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones**. Es un modelo
 **solo de acciones**: sin ETF de relleno; si un mes nada cumple, el dinero espera.
 
-Tiene **dos paquetes activos**. Hubo tres por horizonte, pero dos se retiraron tras una prueba
-histórica (ver abajo):
-
 | Paquete | Qué busca | Estado |
 |---|---|---|
-| **3–5 años** · Calidad a precio razonable | De las empresas que pasan el cribado de calidad del bot: ROIC ≥ 12 %, ingresos ≥ 3 %/año, caja libre ≥ 6 % de ventas, deuda moderada y a un precio razonable (caja libre, PER o EV/EBIT bajos), sin estar disparada ni en caída libre. Sin bancos. | **Activo, en prueba.** Probado con cuentas de cada fecha: bate al S&P 500, pero **no demuestra ventaja** sobre elegir sin criterio entre las mismas empresas. |
-| **Dividendos** · Small caps | Small caps (S&P 600 + S&P 400) que pagan dividendo regular **sin recortarlo** (≥ 5 años pagando), con caja que lo cubre, poca deuda y sin diluir. Hasta 8 empresas, 2 por sector; se compara con el Russell 2000 (IWM). | **Activo.** No se ha podido probar en el pasado (faltan las empresas que quebraron); el seguimiento lo mide en vivo. |
-| ~~1–3 años~~ · Descuento con tesis | Empresas sólidas baratas frente a su propio rango de 5 años. | **Retirado** (no superó la prueba). |
-| ~~5+ años~~ · Compounders | ROIC medio ≥ 15 %, ingresos ≥ 6 %/año, caja libre positiva 4 años… | **Retirado** (no superó la prueba). |
+| **Lynch pequeñas** | Empresas de 300–5.000 M$ que pasan el filtro Peter Lynch **y** el cribado de calidad del bot, con el PEG recalculado al precio del día. Hasta 15, máx. 3 por sector. Frenos: la IA no la ha descartado, precio dentro del rango de valor de su tesis, último trimestre sin hundirse. Se compara con el Russell 2000. | **Activo, en prueba** (ver arriba). |
+| **Dividendos** · Small caps | Small caps del Russell 2000 (posiciones de IWM; si iShares falla, S&P 600 + 400) que pagan dividendo regular **sin recortarlo** (≥ 5 años pagando), con caja que lo cubre, poca deuda y sin diluir. Hasta 8, 2 por sector; frente al Russell 2000. | **Activo.** No se ha podido probar en el pasado. |
+| ~~1–3 años~~ · Descuento con tesis | Baratas frente a su propio rango de 5 años. | Retirado |
+| ~~3–5 años~~ · Calidad a precio razonable | ROIC ≥ 12 %, crecimiento ≥ 3 %, caja, precio razonable. | Retirado (con splits corregidos) |
+| ~~5+ años~~ · Compounders | ROIC medio ≥ 15 %, crecimiento ≥ 6 %… | Retirado |
+| ~~Lynch grandes~~ | El filtro Lynch en > 5.000 M$. | Retirado (no bate al S&P 500) |
 
-Los paquetes retirados siguen codificados (`backend/mensual/paquetes.py`): se pueden volver a
-activar añadiéndolos a `ACTIVOS`. Las operaciones que ya tengas anotadas con ellos se conservan en el
-Vigía, marcadas «retirado».
+Los paquetes retirados siguen codificados (`backend/mensual/paquetes.py`): se reactivan añadiéndolos
+a `ACTIVOS`. Las operaciones que ya tengas anotadas con ellos se conservan en el Vigía, marcadas
+«retirado». En «Mi cartera», una compra de Lynch pequeñas avisa si deja de cumplir las reglas por
+algo que no es el precio (beneficios, deuda, inventario) o si ya está cara (PEG > 1).
 
 ### La prueba histórica de los paquetes (point-in-time) y su veredicto
 
-`prueba-paquetes.yml` (*Actions → Prueba histórica de los paquetes → Run workflow*, ~6 min con caché)
-reconstruye, cada fin de mes desde 2015, lo que habría elegido cada paquete **con las cuentas tal como
-se conocían en esa fecha** (la SEC guarda cuándo se presentó cada cifra) y el **mismo código** del bot.
-Mide la rentabilidad total bruta a 12, 24 y 36 meses frente al S&P 500 y frente a «cualquier empresa del
-listado a partes iguales». **Regla fijada antes de ver los resultados:** un paquete se mantiene solo si a
-12 **y** 24 meses supera a **ambos**. (El listado son las empresas que HOY están en el S&P 500, así que
-ya le ganan al índice por sí solas: aprobar no demuestra nada, suspender es una señal clara.)
+`prueba-paquetes.yml` reconstruye cada fin de mes desde 2015 lo que habría elegido cada paquete con
+las cuentas **tal como se conocían en esa fecha** y el mismo código del bot (S&P 500 de hoy). Regla
+fijada antes de ver los resultados: un paquete se mantiene solo si a 12 **y** 24 meses supera al
+S&P 500 **y** al listado a partes iguales. Resultado **con el precio corregido por splits**:
 
 | Horizonte | S&P 500 | Listado a partes iguales | Solo las que pasan el cribado |
 |---|---:|---:|---:|
-| 12 m | 14,9 % | 18,6 % | 16,8 % |
-| 24 m | 32,0 % | 40,1 % | 36,7 % |
-| 36 m | 50,1 % | 63,1 % | 59,7 % |
+| 12 m | 14,9 % | 18,6 % | 16,7 % |
+| 24 m | 32,0 % | 40,1 % | 36,5 % |
+| 36 m | 50,1 % | 63,1 % | 59,1 % |
 
 | Paquete | Exceso vs S&P 500 (12 / 24 / 36 m) | Exceso vs listado (12 / 24 / 36 m) | Veredicto |
 |---|---|---|---|
-| 1–3 años | +6,5 / +0,6 / +11,7 pp | +2,5 / **−8,4** / −3,0 pp | ❌ retirado: a 24 m no supera al listado |
-| 3–5 años | +4,1 / +9,4 / +8,5 pp | +0,5 / +1,3 / −4,5 pp | ✅ se mantiene **en prueba** |
-| 5+ años | +3,3 / +12,0 / +13,8 pp | **−0,4** / +3,9 / +0,9 pp | ❌ retirado: a 12 m no supera al listado (por 0,4 pp) |
+| 1–3 años | +6,5 / +0,6 / +11,6 pp | +2,4 / **−8,4** / −3,1 pp | ❌ |
+| 3–5 años | +2,0 / +5,2 / +2,2 pp | **−1,7** / **−2,9** / −10,8 pp | ❌ (antes del arreglo, aprobaba por poco) |
+| 5+ años | +3,4 / +11,0 / +14,1 pp | **−0,3** / +2,9 / +1,1 pp | ❌ |
 
-Lo que **no** dice (y conviene tener presente):
-- Los intervalos de confianza al 90 % de «exceso vs listado» incluyen el cero en los tres paquetes y
-  los tres horizontes: **ningún paquete ha demostrado que elegir aporte más que no elegir.**
-- El 5+ años se retiró por la mínima (−0,4 pp a 12 m, dentro del margen de error) y a 24 m iba por
-  delante; es reversible. La regla se fijó antes y se aplica tal cual.
-- El propio cribado de calidad rindió **menos** que el listado entero (−1,7 / −3,3 / −3,4 pp a 12 / 24 /
-  36 m), aunque sí batió al S&P 500.
-- Sesgo de supervivencia a favor de todos (solo empresas que hoy siguen en el índice). La IA y el
-  análisis de tesis no se pueden reconstruir en el pasado, así que no están en la prueba.
+El propio cribado de calidad rindió **menos** que el listado entero (−1,8 / −3,6 / −4,0 pp), aunque
+batió al S&P 500. En el S&P 500 ninguna regla basada en las cuentas ha demostrado elegir mejor que
+no elegir; donde sí aparece ventaja es en las pequeñas con el filtro Lynch.
 
 ### Qué dijo la prueba anterior (precio, 2012-2026)
 
@@ -201,10 +255,10 @@ paquete de 1–3 años **no pasó** los criterios fijados antes de ver los resul
 
 1. `mensual.yml` (día 1 de cada mes, o a mano) ejecuta `python -m mensual.recomendador --sin-ia`.
    Ya **no usa Gemini ni Finnhub** (la IA solo servía al paquete de 1–3 años).
-2. Carga el universo desde Supabase (último cribado de cada empresa, con sus métricas) y descarga sus
-   precios (Yahoo, gratis).
-3. **Paquete 3–5 años:** puertas de calidad/crecimiento/precio y una puntuación 0-100 (calidad,
-   crecimiento, valoración, momento de 12 meses); máx. 6 empresas, 2 por sector.
+2. Carga el universo desde Supabase (último cribado de cada empresa, con sus métricas y su evaluación
+   Lynch) y descarga sus precios (Yahoo, gratis).
+3. **Lynch pequeñas:** rehace el PEG con el precio del día (`lynch.con_precio`), se queda con las de
+   300–5.000 M$ que además pasan el cribado de calidad y ordena por puntos; máx. 15, 3 por sector.
    **Dividendos** (`con_dividendos`, activado por defecto): módulo aparte sobre small caps (ver arriba).
 4. **Frenos que solo pueden quitar o avisar, nunca añadir:** precio por encima del rango de valor de la
    tesis; chequeo del último trimestre publicado en la SEC (ingresos y margen interanuales). Las
@@ -212,17 +266,16 @@ paquete de 1–3 años **no pasó** los criterios fijados antes de ver los resul
 5. **Seguimiento automático** (solo paquetes activos): calcula cuánto habrían rendido las elecciones de
    los informes anteriores (el primero de cada mes, para que no se pueda repetir hasta que salga uno
    bonito) frente al S&P 500 y frente al «resto del universo» (todas las elegibles de ese mes a partes
-   iguales); Dividendos, frente al Russell 2000. Si el paquete bate al índice pero no al resto del
-   universo, lo que funciona es el filtro de calidad, no la selección.
+   iguales); Lynch pequeñas y Dividendos, frente al Russell 2000.
 6. Guarda el informe en Supabase (`mensual_informes`) y abre un Issue con las elegidas.
 7. La pestaña **Mensual** del Vigía lee ese informe: eliges paquete, escribes cuánto vas a invertir y
    reparte a partes iguales con tope por empresa (lo que no cabe NO se fuerza: se guarda para el mes
    siguiente). Las compras se etiquetan con su paquete y ves el resultado por horizonte.
 
-> **Honestidad sobre «encontrar ganadoras».** Nada de esto está demostrado que bata al S&P 500 más
-> allá de lo que ya consigue cualquier selección de empresas supervivientes. La prueba histórica
-> descarta lo que ni con esa ventaja gana; lo que queda se mantiene **en prueba**, y el juez es el
-> seguimiento en vivo (12–24 meses de cohortes mensuales) y tu marcador frente al S&P 500.
+> **Honestidad sobre «encontrar ganadoras».** Lo único que ha aprobado la prueba histórica es el
+> filtro Lynch en pequeñas, y la prueba tiene sesgo a favor (faltan las que quebraron). Se mantiene
+> **en prueba**: el juez es el seguimiento en vivo (12–24 meses de cohortes mensuales) y tu marcador
+> frente al S&P 500. Si no gana, el índice es la respuesta.
 
 ### Privacidad: tu cartera nunca sale de tu móvil
 
@@ -241,7 +294,7 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `backend/mensual/backtest.py` | Motor del backtest, controles (S&P 500, supervivencia, azar), veredicto, anexo de robustez. |
 | `backend/mensual/precios.py` | Descarga de precios (Yahoo Finance, gratis) y universo S&P 500 con su sector. |
 | `backend/mensual/recomendador.py` | El informe mensual (universo, paquetes activos, frenos, seguimiento) y el Markdown del Issue. |
-| `backend/mensual/paquetes.py` | Reglas y puntuación de los paquetes de calidad; `ACTIVOS` dice cuáles se ofrecen (hoy solo 3–5 años). Funciones puras, sin red. |
+| `backend/mensual/paquetes.py` | Reglas, puntuación y textos de los paquetes; `ACTIVOS` dice cuáles se ofrecen (hoy solo Lynch pequeñas). Funciones puras, sin red. |
 | `backend/mensual/pit.py` | Cuentas de la SEC «tal como se conocían» en cada fecha (point-in-time) para probar los paquetes en el pasado. |
 | `backend/mensual/prueba_calidad.py` | La prueba histórica de los paquetes y su veredicto (regla fijada de antemano). |
 | `backend/mensual/dividendos.py` | Sección de small caps con dividendo constante (S&P 600 + S&P 400) y su seguimiento frente al Russell 2000. |
@@ -252,6 +305,10 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Mensual. |
 | `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano. |
 | `.github/workflows/prueba-paquetes.yml` | Prueba histórica de los paquetes con cuentas de cada fecha (a mano; informe en *Summary*). |
+| `backend/lynch.py` | Filtro Peter Lynch (puro, sin red): categoría, PEG, deuda, inventario, puntos; `con_precio` lo rehace con el precio de hoy. |
+| `backend/mensual/prueba_lynch.py` | Prueba histórica del filtro Lynch (grandes vs S&P 500, pequeñas vs Russell 2000, % de aciertos). |
+| `.github/workflows/prueba-lynch.yml` | Lanza esa prueba a mano (informe en *Summary*). |
+| `db/007_lynch.sql` | Añade la evaluación Lynch a la vista pública del Vigía (aplicar en el SQL Editor de Supabase). |
 | `backend/mensual/mercados.py` | Listas de índices y bolsas para el filtro por mercado del Vigía (`docs/mercados.json`). |
 | `.github/workflows/mercados.yml` | Actualiza esas listas cada lunes. |
 | `.github/workflows/dividendos.yml` | Sección de dividendos suelta (a mano), con opción de depurar empresas concretas. |

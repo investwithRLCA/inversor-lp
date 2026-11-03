@@ -19,7 +19,7 @@
   // Etiquetas válidas en una operación. «corto» (1-3 años) y «largo» (5+ años) están RETIRADOS
   // (no superaron la prueba histórica) pero se aceptan para no perder las operaciones ya
   // anotadas con ese paquete. Los activos hoy son «medio» (3-5 años) y «dividendos».
-  const PAQUETES = ["corto", "medio", "largo", "dividendos"];
+  const PAQUETES = ["corto", "medio", "largo", "lynch_g", "lynch_p", "dividendos"];
 
   // ───────────────────────── fechas ─────────────────────────
 
@@ -145,7 +145,15 @@
     if (!e || e.e === "sin_datos") {
       m.push("Sin precio ni tesis en el Vigía: no puedo valorarla ni vigilarla."); sube("revisar");
     } else {
-      if (e.qp === false) {
+      const deLynch = String(f.paq || "").startsWith("lynch");
+      if (deLynch && e.ly === "no") {
+        m.push("Ya no pasa el filtro Lynch por algo que no es el precio (beneficios, deuda o inventario han empeorado " +
+               "en sus últimas cuentas). Era la razón de comprarla: revisa si la historia sigue en pie."); sube("revisar");
+      } else if (deLynch && e.ly === "precio") {
+        m.push("Ya no está barata según Lynch (el PEG pasa de 1 al precio de hoy): no añadas más. " +
+               "Si la historia sigue en pie, Lynch dejaba correr a las ganadoras."); sube("info");
+      }
+      if (e.qp === false && !deLynch) {
         m.push("Ya no pasa el cribado cuantitativo del bot (calidad, caja o solvencia han empeorado " +
                "en sus últimas cuentas). Relee la tesis: es motivo para revisar, no para vender a ciegas."); sube("revisar");
       }

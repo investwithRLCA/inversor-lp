@@ -18,9 +18,12 @@ LO QUE ESTO ES Y NO ES — importante para no engañarse:
     «Prueba histórica de los paquetes»), con una regla de decisión fijada antes
     de ver los resultados: un paquete se mantiene solo si a 12 y a 24 meses
     supera al S&P 500 Y a una selección sin criterio del mismo listado.
-        corto  → NO supera al listado a 24 meses (-8,4 pp)           → desactivado
-        medio  → supera a ambos (por poco; indistinguible del listado) → ACTIVO, en prueba
-        largo  → a 12 meses queda 0,4 pp por debajo del listado        → desactivado
+    Con el precio corregido por splits (nov-2026; antes los precios antiguos de
+    Yahoo, ajustados por splits posteriores, hacían parecer baratas a las futuras
+    ganadoras):
+        corto  → NO supera al listado a 24 meses (-8,4 pp)                → desactivado
+        medio  → NO supera al listado a 12 ni a 24 meses (-1,7 / -2,9 pp)  → desactivado
+        largo  → a 12 meses queda 0,3 pp por debajo del listado            → desactivado
     Aprobar no demuestra nada (el listado son las empresas que HOY siguen en el
     índice y ya ganan solas al S&P 500); suspender sí es una señal clara.
   · Los paquetes desactivados siguen programados: se reactivan añadiéndolos a
@@ -40,10 +43,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-PAQUETES = ("corto", "medio", "largo")      # todos los que el módulo sabe calcular
+PAQUETES = ("corto", "medio", "largo", "lynch_g", "lynch_p")   # todos los que el módulo sabe calcular
 # Los que se ofrecen hoy. «corto» y «largo» quedaron desactivados por la prueba
 # histórica (ver arriba); para volver a activarlos basta con añadirlos aquí.
-ACTIVOS = ("medio",)
+# «lynch_g» y «lynch_p» = filtro Peter Lynch (backend/lynch.py) en grandes (> 5.000 M$) y
+# pequeñas (300–5.000 M$), además del cribado de calidad del bot. Prueba histórica
+# (mensual/prueba_lynch.py, con el precio corregido por splits, nov-2026):
+#   lynch_p → +6,0 pp/año sobre el Russell 2000 a 12 m y +14,9 pp a 24 m;
+#             +1,7 / +5,3 pp sobre elegir sin criterio entre las pequeñas      → ACTIVO, en prueba
+#   lynch_g → por debajo del S&P 500 (-3,7 pp a 12 m, -8,9 pp a 24 m)           → desactivado
+#   medio   → con el precio corregido por splits ya NO supera al listado
+#             (-1,7 pp a 12 m, -2,9 pp a 24 m)                                  → desactivado
+ACTIVOS = ("lynch_p",)
 
 INFO = {
     "corto": {
@@ -65,6 +76,26 @@ INFO = {
             "moderado y NO están caros: pagas un precio razonable por la calidad. Se "
             "ordenan sobre todo por lo baratos que están respecto a lo que ganan y generan."),
     },
+    "lynch_g": {
+        "nombre": "Peter Lynch · grandes",
+        "horizonte": "1–3 años",
+        "etiqueta": "Lynch grandes",
+        "descripcion": (
+            "Las reglas de Peter Lynch («One Up on Wall Street»): beneficio por acción que crece "
+            "de forma sostenida, sin años de pérdidas, a un precio que no se come ese crecimiento "
+            "(PEG ≤ 1), poca deuda e inventario bajo control. Empresas de más de 5.000 M$; se "
+            "comparan con el S&P 500."),
+    },
+    "lynch_p": {
+        "nombre": "Peter Lynch · pequeñas",
+        "horizonte": "1–3 años",
+        "etiqueta": "Lynch pequeñas",
+        "descripcion": (
+            "Las mismas reglas de Peter Lynch en empresas de 300 a 5.000 M$ (el terreno del "
+            "Russell 2000, con el que se comparan), y que además pasan el cribado de calidad del bot. "
+            "Lynch buscaba aquí sus mejores ideas: empresas pequeñas que crecen rápido y que aún "
+            "pocos siguen. Más volátiles que las grandes."),
+    },
     "largo": {
         "nombre": "Compounders",
         "horizonte": "5 años o más",
@@ -85,6 +116,10 @@ class ReglasPaquetes:
     n_medio: int = 6
     n_largo: int = 8
     n_max_sector: int = 2
+    n_lynch: int = 15                   # como en su prueba histórica
+    n_lynch_sector: int = 3
+    lynch_cap_grande: float = 5_000.0   # M$: frontera grandes / pequeñas
+    lynch_con_cribado: bool = True      # además deben pasar el cribado de calidad (la variante probada)
 
     # --- LARGO: compounders --------------------------------------------- #
     largo_roic_min: float = 15.0        # ROIC medio ≥ 15 %
@@ -114,7 +149,11 @@ class ReglasPaquetes:
     pesos_medio: tuple = (0.30, 0.15, 0.45, 0.10)
 
     def n_de(self, paquete: str) -> int:
-        return {"corto": self.n_corto, "medio": self.n_medio, "largo": self.n_largo}[paquete]
+        return {"corto": self.n_corto, "medio": self.n_medio, "largo": self.n_largo,
+                "lynch_g": self.n_lynch, "lynch_p": self.n_lynch}[paquete]
+
+    def sector_de(self, paquete: str) -> int:
+        return self.n_lynch_sector if paquete.startswith("lynch") else self.n_max_sector
 
 
 # --------------------------------------------------------------------------- #
@@ -393,6 +432,20 @@ def criterios(paquete: str, r: ReglasPaquetes | None = None) -> list[str]:
             "Ha rebotado al menos un 3 % desde su mínimo del último mes (ha dejado de caer).",
             f"Máximo {r.n_corto} empresas y {r.n_max_sector} por sector.",
             "Frenos: precio sobre el rango de valor de su tesis, último trimestre, y la IA si ve un problema estructural con confianza alta.",
+        ]
+    if paquete in ("lynch_g", "lynch_p"):
+        tam = (f"más de {r.lynch_cap_grande:,.0f} M$".replace(",", ".") if paquete == "lynch_g"
+               else f"entre 300 y {r.lynch_cap_grande:,.0f} M$".replace(",", "."))
+        return [
+            "Beneficio por acción con beneficios TODOS los años y creciendo: «rápida» 20–50 %/año; "
+            "«sólida» 10–20 % con ventas ≥ 1.000 M$; «lenta» < 10 % solo con ventas ≥ 1.000 M$ y dividendo ≥ 3 %.",
+            "PEG ≤ 1 al precio de hoy (PER ÷ crecimiento; en sólidas y lentas, PER ÷ (crecimiento + dividendo)). 0,5 = ganga.",
+            "Deuda/patrimonio ≤ 80 % (bancos y aseguradoras: patrimonio/activos ≥ 5 % y ROA ≥ 1 %).",
+            "El inventario no crece más que las ventas (+5 puntos como mucho). Una «rápida» ya grande, PER ≤ 40.",
+            f"Tamaño {tam}. Se ordenan por puntos (sobre todo PEG; luego deuda, caja, caja libre y recompras). "
+            f"Máximo {r.n_lynch} empresas y {r.n_lynch_sector} por sector.",
+            "Además pasa el cribado de calidad del bot (rentabilidad del capital, caja, solvencia): es la combinación que se probó.",
+            "Frenos: la IA no la ha descartado, el precio no supera el rango de valor de su tesis y el último trimestre no se ha hundido.",
         ]
     if paquete == "medio":
         return [

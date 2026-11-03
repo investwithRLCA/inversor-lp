@@ -29,6 +29,10 @@ on:
         type: boolean
         required: false
         default: false
+      ronda_dias:
+        description: "Repasar las empresas de índices vistas hace más de N días (0 = repasarlas todas ya)"
+        required: false
+        default: "45"
       solo_estado:
         description: "No procesar nada: solo mostrar cómo va el barrido"
         type: boolean
@@ -42,7 +46,7 @@ concurrency:
 jobs:
   barrido:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 300     # una ronda grande (lote 1.500) tarda ~2-3 h
     steps:
       - uses: actions/checkout@v4
 
@@ -68,4 +72,5 @@ jobs:
           --lote ${{ github.event.inputs.lote || '400' }}
           --max-ia ${{ github.event.inputs.max_ia || '25' }}
           ${{ (github.event.inputs.solo_cribado == 'true') && '--solo-cribado' || '' }}
+          --ronda-dias ${{ github.event.inputs.ronda_dias || '45' }}
           ${{ (github.event.inputs.solo_estado == 'true') && '--estado' || '' }}

@@ -39,6 +39,10 @@ PAQ_DIV = "dividendos"       # sección de small caps con dividendo: se compara 
 TODOS = PAQUETES + (PAQ_DIV,)
 BENCHMARK = "SPY"
 BENCH_DIV = "IWM"
+# Paquetes que se comparan con el Russell 2000 (IWM) en vez del S&P 500, y que no tienen
+# «universo de control» propio en el informe (el universo del informe es el del cribado de calidad).
+CON_IWM = (PAQ_DIV, "lynch_p")
+SIN_POOL_GENERAL = ("lynch_g", "lynch_p")
 
 
 def yahoo(ticker: str) -> str:
@@ -86,7 +90,7 @@ def tickers_necesarios(filas: list[dict], max_informes_universo: int = 12) -> se
         picks = _picks(inf)
         for lista in picks.values():
             out.update(yahoo(c["ticker"]) for c in lista)
-        if PAQ_DIV in picks:
+        if any(p in picks for p in CON_IWM):
             out.add(BENCH_DIV)
         if i >= len(informes) - max_informes_universo:
             out.update(yahoo(t) for t in (inf.get("universo") or []))
@@ -150,7 +154,8 @@ def calcular(filas: list[dict], precios: pd.DataFrame, hasta: pd.Timestamp) -> d
             if not lista:
                 continue
             es_div = paquete == PAQ_DIV
-            ref_ret, pool_ret = (iwm, pool_div) if es_div else (spy, pool)
+            ref_ret = iwm if paquete in CON_IWM else spy
+            pool_ret = pool_div if es_div else (None if paquete in SIN_POOL_GENERAL else pool)
             filas_pick = []
             sin_precio = []
             for c in lista:
@@ -167,7 +172,7 @@ def calcular(filas: list[dict], precios: pd.DataFrame, hasta: pd.Timestamp) -> d
                 "n": len(lista), "n_sin_precio": len(sin_precio), "sin_precio": sin_precio,
                 "dias": dias,
                 "rent": None if rent is None else round(rent, 4),
-                "ref": BENCH_DIV if es_div else BENCHMARK,
+                "ref": BENCH_DIV if paquete in CON_IWM else BENCHMARK,
                 "spy": None if ref_ret is None else round(ref_ret, 4),          # rentabilidad de la referencia (SPY o IWM)
                 "pool": None if pool_ret is None else round(pool_ret, 4),
                 "exceso": None if rent is None or ref_ret is None else round(rent - ref_ret, 4),

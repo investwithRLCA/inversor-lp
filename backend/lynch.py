@@ -73,6 +73,8 @@ class ResultadoLynch:
     dividendo: float | None = None    # %
     deuda_patrimonio: float | None = None
     caja_neta_pct: float | None = None  # (caja - deuda) / capitalización, %
+    capitalizacion: float | None = None  # M$
+    ventas: float | None = None          # M$, último ejercicio
     inventario_cambio: float | None = None  # puntos de % de las ventas
     motivos: list[str] = field(default_factory=list)   # por qué NO pasa
     razones: list[str] = field(default_factory=list)   # por qué sí (en cristiano)
@@ -80,6 +82,57 @@ class ResultadoLynch:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def resumen(self, bpa: float | None = None) -> dict[str, Any]:
+        """Lo que se guarda con cada cribado (quant_screens.breakdown["lynch"]) y ve el Vigía.
+        `bpa` (beneficio por acción del último año) permite recalcular PER y PEG con otro precio."""
+        r = lambda x, d=2: None if x is None else round(float(x), d)
+        return {"v": self.version, "pasa": self.pasa, "cat": self.categoria, "pts": r(self.puntos, 1),
+                "crec": r(self.crec_bpa, 1), "per": r(self.per, 1), "peg": r(self.peg), "peg_div": r(self.peg_div),
+                "div": r(self.dividendo), "de": r(self.deuda_patrimonio), "caja": r(self.caja_neta_pct, 1),
+                "inv": r(self.inventario_cambio, 1), "bpa": r(bpa, 4),
+                "cap": r(self.capitalizacion, 0), "ventas": r(self.ventas, 0),
+                "motivos": self.motivos[:3], "razones": self.razones[:5]}
+
+
+def con_precio(l: dict, precio: float, r: ReglasLynch = DEFAULT) -> dict | None:
+    """Rehace la parte de precio de una evaluación guardada (`ResultadoLynch.resumen`)
+    con el precio de hoy: PER, PEG, dividendo, capitalización y puntos. Las demás
+    reglas (crecimiento, deuda, inventario, beneficios) no dependen del precio.
+    Devuelve None si la evaluación guardada no pasó por otra razón que el precio
+    o si faltan datos."""
+    if not l or not precio or precio <= 0 or not l.get("cat") or not l.get("bpa") or not l.get("crec"):
+        return None
+    otras = [m for m in (l.get("motivos") or []) if not m.startswith(("PEG", "PER "))]
+    if otras:
+        return None
+    bpa, g, cat = float(l["bpa"]), float(l["crec"]), l["cat"]
+    if bpa <= 0 or g <= 0:
+        return None
+    per_ant = l.get("per")
+    precio_ant = per_ant * bpa if per_ant else None
+    ratio = (precio / precio_ant) if precio_ant else 1.0
+    per = precio / bpa
+    div = (l.get("div") or 0.0) / ratio
+    cap = (l.get("cap") or 0.0) * ratio if l.get("cap") else None
+    peg, peg_div = per / g, per / (g + div)
+    usado = peg if cat == "rapida" else peg_div
+    motivos = []
+    if usado > r.peg_max:
+        motivos.append(f"{'PEG' if cat == 'rapida' else 'PEG con dividendo'} {usado:.2f} > {r.peg_max:.1f} al precio de hoy")
+    if cat == "rapida" and (l.get("ventas") or 0) >= r.ventas_min_grande and per > r.per_max_rapida_grande:
+        motivos.append(f"PER {per:.0f} > {r.per_max_rapida_grande:.0f} en una empresa ya grande")
+    if cat == "lenta" and div < r.dividendo_min_lenta:
+        motivos.append(f"dividendo {div:.1f} % < {r.dividendo_min_lenta:.0f} % al precio de hoy")
+    if cap is not None and cap < r.min_capitalizacion:
+        motivos.append(f"capitalización {cap:,.0f} M$ < {r.min_capitalizacion:,.0f} M$")
+    pts_ant = l.get("pts") or 0.0
+    peg_ant = (l.get("peg") if cat == "rapida" else l.get("peg_div"))
+    parte = lambda x: 40 * _escala(x, r.peg_max, r.peg_ideal * 0.8) if x is not None else 0.0
+    pts = round(pts_ant - parte(peg_ant) + parte(usado), 1)
+    return {"pasa": not motivos, "motivos": motivos, "cat": cat, "per": round(per, 1), "peg": round(peg, 2),
+            "peg_div": round(peg_div, 2), "peg_usado": round(usado, 2), "div": round(div, 2), "cap": None if cap is None else round(cap, 0),
+            "crec": g, "puntos": pts, "de": l.get("de"), "caja": l.get("caja")}
 
 
 def _cagr(a: float, b: float, n: int) -> float | None:
@@ -116,6 +169,7 @@ def evaluar(f: Fundamentals, r: ReglasLynch = DEFAULT) -> ResultadoLynch:
         return res
     n = len(bpa) - 1
     g = _cagr(bpa[0], bpa[-1], n)
+    g = None if g is None else round(g, 4)        # evita que un 19,99999 por redondeo no cuente como 20
     res.crec_bpa = g
     if not f.price or f.price <= 0:
         M.append("sin precio")
@@ -128,6 +182,7 @@ def evaluar(f: Fundamentals, r: ReglasLynch = DEFAULT) -> ResultadoLynch:
     div = (f.dividends_paid[-1] / mcap * 100) if (f.dividends_paid and mcap) else 0.0
     res.dividendo = div
     ventas = f.revenue[-1] if f.revenue else 0.0
+    res.capitalizacion, res.ventas = mcap, ventas
 
     # --- categoría ---
     if g is None or g <= 0:

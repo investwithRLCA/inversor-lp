@@ -17,7 +17,7 @@
   let estadoCarga = "idle";    // idle | cargando | ok | vacio | sinTabla | error
   let mensajeError = "";
   let ops = [];
-  let cfg = { impuesto: 0.21, importe: "", paquete: "medio" };
+  let cfg = { impuesto: 0.21, importe: "", paquete: "lynch_p" };
   let almacenamientoOk = true;
   let abiertos = new Set();    // tarjetas desplegadas
   let prefill = null;
@@ -75,11 +75,13 @@
     return { calc, val, valorPos };
   }
 
-  const NOMBRE_PAQ = { corto: "1–3 años", medio: "3–5 años", largo: "5+ años", dividendos: "Dividendos" };
+  const NOMBRE_PAQ = { corto: "1–3 años", medio: "3–5 años", largo: "5+ años", lynch_g: "Lynch grandes", lynch_p: "Lynch pequeñas", dividendos: "Dividendos" };
   // Paquetes ACTIVOS (los que se enseñan, se miden y se pueden elegir). Los retirados no superaron
   // la prueba histórica: solo se conservan sus nombres para las operaciones antiguas de la cartera.
-  const PAQS_ORDEN = ["medio", "dividendos"];
-  const PAQS_RETIRADOS = ["corto", "largo"];
+  const PAQS_ORDEN = ["lynch_p", "dividendos"];
+  const CON_IWM = ["dividendos", "lynch_p"];      // se comparan con el Russell 2000
+  const TIPO_LYNCH = { rapida: "crecimiento rápido", solida: "sólida", lenta: "lenta con dividendo" };
+  const PAQS_RETIRADOS = ["corto", "medio", "largo", "lynch_g"];
   const nombrePaq = (k) => (PAQS_RETIRADOS.includes(k) ? NOMBRE_PAQ[k] + " (retirado)" : NOMBRE_PAQ[k] || k);
 
   /** Los paquetes del informe; si es un informe antiguo (solo candidatas), un paquete corto. */
@@ -126,16 +128,20 @@
     const avisos = (c.avisos || []).concat(dosMeses);
     const esCalidad = paquete !== "corto";
     const esDiv = paquete === "dividendos";
+    const esLynch = String(paquete).startsWith("lynch");
+    const ly = c.lynch || {};
     const dv = c.dividendo || {}, emp = c.empresa || {};
     const r5 = (c.rend || {})["5a"] || (c.rend || {})["3a"];
     const nr5 = (c.rend || {})["5a"] ? "5 años" : "3 años";
     const cagrDiv = dv.cagr_5a != null ? dv.cagr_5a : dv.cagr_3a;
     const subPrecio = esDiv ? (c.cap != null ? `cap. ${num(c.cap, 0)} M$` : "")
+      : esLynch ? (ly.cap != null ? `cap. ${num(ly.cap, 0)} M$` : "")
       : (c.descuento != null ? `${signo(-c.descuento * 100, 0)} % vs su mediana 5a` : "");
     return `<article class="m-cand ${abierta ? "abierta" : ""}" data-t="${esc(c.ticker)}">
       <div class="m-cab">
         <div><div class="m-tk">${esc(c.ticker)} ${c.doble_descuento ? '<span title="Por debajo del precio de entrada de la tesis">⭐</span>' : ""}
-            ${esDiv ? chip(num(dv.rentab_div, 1) + " % dividendo", "m-bien") : pillNivel(c)}</div>
+            ${esDiv ? chip(num(dv.rentab_div, 1) + " % dividendo", "m-bien")
+              : esLynch && !tieneTesis(c) ? `<span class="m-chip" title="Solo ha pasado el filtro Lynch (los números); aún sin análisis de IA">sin IA aún</span>` : pillNivel(c)}</div>
             <div class="m-nombre">${esc(c.nombre)}${c.sector ? " · " + esc(c.sector) : ""}</div></div>
         <div class="m-precio num">${num(c.precio)}<small>${esCalidad && c.puntos != null ? "puntos " + num(c.puntos, 0) + " · " : ""}${esc(subPrecio)}</small></div>
       </div>
@@ -145,9 +151,11 @@
           : `<span class="m-dim">Ya pesa el tope en tu cartera mensual: no añadas más.</span>`)
         : `<span class="m-dim">Reparto orientativo: ${pct(c.peso)} del importe</span>`}</div>
       ${esCalidad && c.clave ? `<div class="m-dim m-linea">${esc(lineaClave(c.clave))}</div>` : ""}
+      ${esLynch ? `<div class="m-dim m-linea">PER ${num(ly.per, 0)} · beneficio por acción ${signo(ly.crec, 0)} %/año${ly.div ? " · dividendo " + num(ly.div, 1) + " %" : ""}${ly.de != null ? " · deuda/patrimonio " + num(ly.de * 100, 0) + " %" : ""}${ly.caja != null && ly.caja > 0 ? " · caja neta " + num(ly.caja, 0) + " % de lo que vale" : ""}</div>` : ""}
       ${esDiv ? `<div class="m-dim m-linea">Dividendo ${usd(dv.dps)} por acción al año · ${num(dv.anios_sin_recorte, 0)} años sin recorte${cagrDiv != null ? " · crece " + signo(cagrDiv, 1) + " %/año" : ""}${emp.payout != null ? " · reparte el " + num(emp.payout, 0) + " % de su " + (emp.financiera ? "beneficio/caja" : "caja libre") : ""}${emp.dilucion_5a != null ? " · acciones 5a " + signo(emp.dilucion_5a, 0) + " %" : ""}</div>` : ""}
       <div class="m-chips">
         ${esCalidad && c.calidad != null ? chip("calidad " + num(c.calidad, 0)) + chip("crecimiento " + num(c.crecimiento, 0)) + chip("precio " + num(c.valoracion, 0)) : ""}
+        ${esLynch ? chip(TIPO_LYNCH[ly.cat] || "—") + chip("PEG " + num(ly.peg_usado, 2), ly.peg_usado != null && ly.peg_usado <= 0.5 ? "m-bien" : "") : ""}
         ${esDiv && r5 ? chip(nr5 + ": precio " + signo(r5.precio, 1) + " + dividendo " + signo(r5.div, 1) + " = " + signo(r5.total, 1) + " %/año") : ""}
         ${ia ? chip("IA: " + ia.tipo + " (" + ia.confianza + ")", ia.tipo === "estructural" ? "m-mal" : ia.tipo === "temporal" ? "m-bien" : "") : ""}
         ${avisos.length ? chip("⚠ " + avisos.length + " aviso(s)", "m-warn") : ""}
@@ -166,6 +174,7 @@
         ${c.tesis ? `<p><strong>Tesis (IA):</strong> ${esc(c.tesis)}</p>` : ""}
         ${esDiv ? "" : tieneTesis(c)
           ? `<p><strong>Tesis:</strong> nota ${c.nota ?? "—"}/10 · rango de valor ${c.valor_min ?? "—"}–${c.valor_max ?? "—"} · precio de entrada ${c.precio_entrada ?? "—"}${c.tesis_dias != null ? ` · analizada hace ${c.tesis_dias} días` : ""}</p>`
+          : esLynch ? `<p class="m-dim">Sin tesis de IA todavía: el bot la analizará en los próximos días.</p>`
           : `<p class="m-dim">Sin tesis de IA todavía: nota de cribado cuantitativo ${c.quant ?? "—"}/100.</p>`}
         ${avisos.map((a) => `<p class="m-aviso">⚠️ ${esc(a)}</p>`).join("")}
         ${(c.titulares || []).length ? `<p><strong>Titulares recientes</strong></p><ul>${c.titulares.map((t) => `<li>${esc(t.fecha)} · ${esc(t.titular)}</li>`).join("")}</ul>` : ""}
@@ -225,10 +234,12 @@
             ${P.descripcion ? `<p class="m-dim">${esc(P.descripcion)}</p>` : ""}
             ${(P.criterios || []).length ? `<details class="m-det"><summary>Criterios exactos</summary><ul>${P.criterios.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
           </div>`;
-    if (sel === "dividendos") {
+    if (PAQS_RETIRADOS.includes(sel)) {
+      h += `<div class="m-aviso"><strong>Paquete retirado:</strong> no superó la prueba histórica. Sale porque este informe es anterior al cambio: lanza el «Recomendador mensual» (GitHub → Actions) para tener el informe nuevo. No compres por él.</div>`;
+    } else if (sel === "dividendos") {
       h += `<div class="m-aviso">Esta sección <strong>no se ha podido probar en el pasado</strong> (faltan las empresas que quebraron o salieron del índice, y las cifras históricas de abajo son de supervivientes). Mira «Seguimiento» más abajo antes de poner dinero serio. Ojo fiscal: los dividendos tributan cada año como ahorro (en EE. UU. retienen un 15 % que normalmente puedes descontar), la revalorización solo al vender.</div>`;
-    } else if (sel === "medio") {
-      h += `<div class="m-aviso">Este paquete <strong>sí se ha probado en el pasado</strong> (cuentas tal como se conocían en cada fecha, 2015-2025, empresas del S&amp;P 500 de hoy): rindió más que el S&amp;P 500 a 1, 2 y 3 años, pero <strong>no más que una selección sin criterio del mismo listado</strong> (+0,5 pp a 1 año, +1,3 pp a 2 años, dentro del margen de error; −4,5 pp a 3 años). Como el listado son las ganadoras de hoy, esa prueba tiene el viento a favor: <strong>no demuestra ventaja</strong>. Se mantiene en prueba en vivo: mira «Seguimiento» más abajo antes de poner dinero serio.</div>`;
+    } else if (sel === "lynch_p") {
+      h += `<div class="m-aviso">Este paquete <strong>sí se ha probado en el pasado</strong> (cuentas tal como se conocían en cada fecha, 2015-2025, ~1.100 empresas pequeñas de hoy): rindió <strong>+5,9 puntos al año más que el Russell 2000</strong> a 1 año y +14,9 a 2 años, y algo más que elegir sin criterio entre las mismas pequeñas (+1,7 a 1 año, dentro del margen de error; +5,3 a 2 años). Acertó (batió al Russell 2000) el 54 % de las compras a 1 año y el 60 % a 3 años, frente a un 47-48 % sin criterio. Faltan las empresas que quebraron, así que la realidad será algo peor: el juez es «Seguimiento», más abajo.</div>`;
     }
     h += `<label class="m-campo">¿Cuánto vas a invertir ahora en este paquete? ($)
             <input id="m-importe" type="text" inputmode="decimal" placeholder="p. ej. 500" value="${esc(cfg.importe)}" autocomplete="off"></label>`;
@@ -268,7 +279,7 @@
     }
     const fila = (k) => {
       const s = (seg.resumen || {})[k]; if (!s || !s.cohortes) return "";
-      const nom = k === "dividendos" ? "Dividendos <small class=\"m-dim\">vs Russell 2000</small>" : nombrePaq(k);
+      const nom = CON_IWM.includes(k) ? `${esc(nombrePaq(k))} <small class="m-dim">vs Russell 2000</small>` : nombrePaq(k);
       if (!s.cohortes_maduras) return `<tr><td>${nom}</td><td colspan="3" class="m-dim">${s.cohortes} cohorte(s), aún sin 3 meses</td></tr>`;
       const cl = s.exceso_medio >= 0 ? "m-pos" : "m-neg";
       return `<tr><td>${nom}</td><td class="num">${s.cohortes_maduras}</td>
@@ -403,14 +414,13 @@
   function seccionNotas() {
     return `<section class="m-card m-notas"><h2>Cómo funciona esto (y cuánto fiarse)</h2>
       <ul>
-        <li><strong>Qué mira:</strong> las empresas que pasan el cribado de calidad del bot y, de ellas, las que cumplen el paquete <em>3–5 años</em> (buen negocio a precio razonable). Aparte, la sección de <em>Dividendos</em> con small caps. Son los dos únicos paquetes activos.</li>
-        <li><strong>Qué se ha quitado y por qué:</strong> se probaron en el pasado (2015-2025) con las cuentas tal como se conocían en cada fecha. <em>1–3 años</em> (barata frente a su historial) y <em>5+ años</em> (compounders) <strong>no superaron ni a una selección sin criterio del mismo listado</strong> (−8,4 pp a 2 años y −0,4 pp a 1 año), así que se retiraron. Las compras que ya tengas anotadas con esos paquetes se conservan, marcadas como «retirado».</li>
-        <li><strong>Lo que queda en 3–5 años:</strong> rindió más que el S&amp;P 500 en la prueba, pero <em>no más que escoger sin criterio entre las mismas empresas</em> (+0,5 pp a 1 año, +1,3 pp a 2 años, dentro del margen de error). Y la prueba tiene el viento a favor: las empresas del listado son las que HOY siguen en el índice. Por eso se mantiene solo «en prueba»: no es una promesa de ganar al índice.</li>
-        <li><strong>Dónde está la ventaja real:</strong> el propio cribado de calidad, tomado solo, rindió algo <em>menos</em> que el listado entero (−1,7 pp a 1 año, −3,3 pp a 2 años) aunque sí batió al S&amp;P 500. Ningún paquete ha demostrado todavía que elegir aporte más que no elegir.</li>
-        <li><strong>Estado:</strong> experimental. Los jueces son el «Seguimiento» (se apunta cada mes lo que habría elegido el paquete y se compara con el S&amp;P 500 y con el resto del universo) y tu marcador: dale 12-24 meses con importes que puedas permitirte, y si no supera al S&amp;P 500, quédate con el índice. Vender por precio rindió peor que el índice: aquí no se manda vender por precio; se vende, si acaso, por tesis rota.</li>
-        <li><strong>Dividendos (small caps):</strong> sección aparte con empresas pequeñas que pagan dividendo y <em>no lo recortan</em> (el dinero por acción se mantiene o sube), con caja que lo cubre, poca deuda y sin diluir; las recompras suman. La rentabilidad anual es precio + dividendo y se compara con el Russell 2000. <strong>No está probada en el pasado</strong> (faltan las empresas que quebraron): el seguimiento la compara cada mes con el Russell 2000. Si una acción de este paquete que tienes recorta o deja de pagar el dividendo, la pestaña «Mi cartera» la marca como tesis rota. Tu cartera de aquí no suma los dividendos que cobres: llévalos aparte.</li>
-        <li>Los análisis de tesis del bot de largo plazo y los chequeos solo pueden quitar o avisar sobre una candidata, nunca añadirla. Las empresas «solo cribado» no tienen análisis de IA de su tesis: léelas con más cautela.</li>
-        <li>No incluye bancos ni aseguradoras en el paquete de 3–5 años (sus cuentas no se miden con estos ratios) ni empresas que no presenten cuentas en EE. UU. bajo US-GAAP.</li>
+        <li><strong>Qué hay:</strong> dos secciones. <em>Lynch pequeñas</em>: empresas de 300 a 5.000 M$ que cumplen las reglas de Peter Lynch («One Up on Wall Street») y además el cribado de calidad del bot. Y <em>Dividendos</em>: small caps que pagan dividendo sin recortarlo.</li>
+        <li><strong>Las reglas de Lynch:</strong> beneficio por acción que crece (20–50 %/año las «rápidas»; 10–20 % las «sólidas» grandes) sin años de pérdidas; PEG ≤ 1 (PER dividido entre el crecimiento: no pagar más de lo que crece; 0,5 es una ganga); deuda/patrimonio ≤ 80 %; inventario que no crece más que las ventas. Lo que Lynch hacía además (hablar con la empresa, conocer el producto, compras de directivos) no está en los números: mira qué hace cada empresa antes de comprar.</li>
+        <li><strong>Lo que dijo la prueba histórica</strong> (2015-2025, cuentas tal como se conocían en cada fecha): en las <em>pequeñas</em> Lynch batió al Russell 2000 (+5,9 puntos al año a 1 año, +14,9 a 2 años) y acertó el 54-60 % de las veces (sin criterio, 47-48 %); a 3 años duplicó el 22 % de las compras y solo el 2 % perdió más de la mitad (sin criterio, 18 % y 10 %). En las <em>grandes</em> NO batió al S&amp;P 500 (−3,7 puntos a 1 año), así que no se ofrece.</li>
+        <li><strong>Qué se ha quitado:</strong> los paquetes de 1–3, 3–5 y 5+ años. Ninguno batió a elegir sin criterio entre las mismas empresas. El de 3–5 años parecía aprobar por poco, pero la prueba tenía un fallo (precios antiguos ajustados por splits que hacían parecer baratas a las futuras ganadoras); corregido, suspende (−1,7 puntos a 1 año). Las compras que ya tengas anotadas con ellos se conservan, marcadas «retirado».</li>
+        <li><strong>Cuánto fiarse:</strong> a la prueba le faltan las empresas que quebraron (sesgo a favor), y el pasado no se repite. Es experimental: el juez es el «Seguimiento» frente al Russell 2000 y tu marcador frente al S&amp;P 500. Dale 12-24 meses con importes que puedas permitirte. Las pequeñas se mueven más que las grandes: espera años malos. Vender por precio rindió peor que el índice: aquí no se manda vender por precio, sino si la empresa deja de cumplir las reglas (tu cartera te avisa).</li>
+        <li><strong>Dividendos (small caps):</strong> empresas pequeñas del Russell 2000 que pagan dividendo y <em>no lo recortan</em>, con caja que lo cubre, poca deuda y sin diluir. La rentabilidad anual es precio + dividendo y se compara con el Russell 2000. <strong>No está probada en el pasado</strong> (faltan las que quebraron). Si una que tienes recorta o deja de pagar el dividendo, «Mi cartera» la marca como tesis rota. Tu cartera de aquí no suma los dividendos que cobres: llévalos aparte.</li>
+        <li>Los análisis de tesis del bot y los chequeos solo pueden quitar o avisar sobre una candidata, nunca añadirla. Las marcadas «sin IA aún» solo han pasado los números.</li>
         <li>Información automática; no es asesoramiento financiero ni fiscal.</li>
       </ul></section>`;
   }
