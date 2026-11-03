@@ -303,18 +303,25 @@ def concentracion(coh: Cohortes, paquete: str, h: int = 12):
 def decidir(coh: Cohortes, paquete: str) -> dict:
     """Aplica la regla fijada de antemano: mantener solo si a 12 y a 24 meses la
     media supera al S&P 500 y al listado."""
-    res = {"paquete": paquete, "mantener": False, "motivos": [], "stats": {}}
+    res = {"paquete": paquete, "mantener": False, "veredicto": "quitar", "motivos": [], "pocos_datos": [], "stats": {}}
     for h in (12, 24):
         s = estadisticas(coh, paquete, h)
         res["stats"][h] = s
         if s is None or s.get("insuficiente"):
-            res["motivos"].append(f"a {h} meses hay pocas fechas con resultado ({(s or {}).get('n_fechas', 0)}): no se puede juzgar")
+            res["pocos_datos"].append(f"a {h} meses hay pocas fechas con resultado ({(s or {}).get('n_fechas', 0)}): no se puede juzgar")
             continue
         if s["ex_spy"] <= 0:
             res["motivos"].append(f"a {h} meses NO supera al S&P 500 ({s['ex_spy'] * 100:+.1f} pp)")
         if s["ex_todas"] <= 0:
             res["motivos"].append(f"a {h} meses NO supera a una selección sin criterio del mismo listado ({s['ex_todas'] * 100:+.1f} pp)")
-    res["mantener"] = not res["motivos"]
+    if res["motivos"]:
+        res["veredicto"] = "quitar"            # basta con suspender una vez
+    elif res["pocos_datos"]:
+        res["veredicto"] = "sin_datos"
+        res["motivos"] = res["pocos_datos"]
+    else:
+        res["veredicto"] = "mantener"
+    res["mantener"] = res["veredicto"] == "mantener"
     return res
 
 
@@ -354,13 +361,26 @@ def informe_md(coh: Cohortes, desde: str, n_empresas: int, n_con_sec: int) -> st
         A(f"Empresas que pasan el cribado de calidad cada mes: mediana {coh.n_cribado.median():.0f} "
           f"(mín. {coh.n_cribado.min():.0f}, máx. {coh.n_cribado.max():.0f}).\n")
 
+    if not coh.ref.empty:
+        A("**Referencias** (media de todas las fechas con resultado):\n")
+        A("| Horizonte | Fechas | S&P 500 | Listado a partes iguales | Solo las que pasan el cribado de calidad | Cribado vs listado |")
+        A("|---|---:|---:|---:|---:|---:|")
+        for h in HORIZONTES:
+            r = coh.ref.dropna(subset=[f"spy_{h}", f"todas_{h}", f"cribado_{h}"]) if f"spy_{h}" in coh.ref.columns else pd.DataFrame()
+            if len(r) < MIN_FECHAS:
+                continue
+            A(f"| {h} m | {len(r)} | {_p(r[f'spy_{h}'].mean())} | {_p(r[f'todas_{h}'].mean())} | {_p(r[f'cribado_{h}'].mean())} | "
+              f"{_pp(r[f'cribado_{h}'].mean() - r[f'todas_{h}'].mean())} |")
+        A("\n_El listado ya gana al S&P 500 sin hacer nada (sesgo de supervivencia): por eso un paquete tiene que batir TAMBIÉN al listado._\n")
+
     decs = {p: decidir(coh, p) for p in PAQUETES}
     A("## Veredicto\n")
     A("| Paquete | Veredicto | Por qué |")
     A("|---|---|---|")
     for p in PAQUETES:
         d = decs[p]
-        A(f"| {NOMBRE[p]} | {'✅ se mantiene (en prueba)' if d['mantener'] else '❌ se quita'} | "
+        etiqueta = {"mantener": "✅ se mantiene (en prueba)", "quitar": "❌ se quita", "sin_datos": "❔ sin datos suficientes"}[d["veredicto"]]
+        A(f"| {NOMBRE[p]} | {etiqueta} | "
           f"{'supera al S&P 500 y al listado a 12 y 24 meses' if d['mantener'] else '; '.join(d['motivos'])} |")
     A("")
     for p in PAQUETES:
@@ -397,8 +417,8 @@ def informe_md(coh: Cohortes, desde: str, n_empresas: int, n_con_sec: int) -> st
             tops = ", ".join(f"{t} ({v * 100:+.1f} pp)" for t, v in c["top"])
             A(f"**¿Depende de una empresa?** Las que más aportan al exceso sobre el S&P 500 a 12 m: {tops}. "
               f"Quitando {c['mejor']}, el exceso medio pasa a {_pp(c['ex_sin_mejor'])} (en total {c['n_empresas']} empresas distintas elegidas).\n")
-        A(f"**Decisión:** {'se mantiene en prueba' if d['mantener'] else 'se quita'}."
-          + ("" if d["mantener"] else " Motivos: " + "; ".join(d["motivos"]) + ".") + "\n")
+        txt = {"mantener": "se mantiene en prueba", "quitar": "se quita", "sin_datos": "sin datos suficientes para decidir"}[d["veredicto"]]
+        A(f"**Decisión:** {txt}." + ("" if d["mantener"] else " Motivos: " + "; ".join(d["motivos"]) + ".") + "\n")
     A("---\n")
     A("**Cómo leerlo.** «Se mantiene» significa solo que no suspende: con el sesgo de supervivencia a favor, no es una prueba de que "
       "vaya a batir al índice. «Se quita» significa que ni siquiera con esa ventaja lo consigue. La IA y el análisis de tesis no se "
@@ -456,7 +476,7 @@ def main() -> None:
     coh.aptas.to_csv(out / "aptas.csv.gz", index=False, compression="gzip")
     coh.ref.to_csv(out / "referencias.csv")
     (out / "decisiones.json").write_text(json.dumps(
-        {p: {"mantener": d["mantener"], "motivos": d["motivos"]} for p, d in
+        {p: {"veredicto": d["veredicto"], "mantener": d["mantener"], "motivos": d["motivos"]} for p, d in
          ((p, decidir(coh, p)) for p in PAQUETES)}, ensure_ascii=False, indent=2), encoding="utf-8")
     print("\n" + md)
 
