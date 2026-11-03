@@ -34,7 +34,7 @@ import pandas as pd
 
 MIN_DIAS_RESUMEN = 90        # una cohorte con menos días no entra en el resumen
 MIN_UNIVERSO = 30            # el control «resto del universo» exige al menos 30 empresas
-PAQUETES = ("corto", "medio", "largo")
+from .paquetes import ACTIVOS as PAQUETES      # solo los paquetes que se ofrecen hoy
 PAQ_DIV = "dividendos"       # sección de small caps con dividendo: se compara con el Russell 2000 (IWM)
 TODOS = PAQUETES + (PAQ_DIV,)
 BENCHMARK = "SPY"

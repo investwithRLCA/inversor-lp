@@ -109,26 +109,59 @@ clave nueva).
 ## Módulo mensual de oportunidades (experimental)
 
 Complemento del bot de largo plazo, pensado para ir **mes a mes**: tú decides cuánto dinero
-metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones**. Parte de **todas las
-empresas que han pasado el cribado cuantitativo del bot** (calidad, caja, solvencia: cientos, no solo
-las que ya tienen análisis de IA) y las reparte en **tres paquetes por horizonte**. Es un modelo
+metes (a mano, en tu bróker) y la herramienta te dice **en qué acciones**. Es un modelo
 **solo de acciones**: sin ETF de relleno; si un mes nada cumple, el dinero espera.
 
-| Paquete | Qué busca | ¿Probado? |
+Tiene **dos paquetes activos**. Hubo tres por horizonte, pero dos se retiraron tras una prueba
+histórica (ver abajo):
+
+| Paquete | Qué busca | Estado |
 |---|---|---|
-| **1–3 años** · Descuento con tesis | Empresas sólidas **baratas frente a sí mismas** (su rango de ~5 años: «siempre ha estado entre 80 y 120 y ahora está en 60»), sin estar hundidas y habiendo dejado de caer. | Solo la regla de precio, en el histórico: **sin ventaja demostrada** (ver abajo). |
-| **3–5 años** · Calidad a precio razonable | ROIC ≥ 12 %, ingresos ≥ 3 %/año, caja libre ≥ 6 % de ventas, deuda moderada y a un precio razonable (caja libre, PER o EV/EBIT bajos), sin estar disparada ni en caída libre. Sin bancos. | **No** (necesita datos financieros de cada fecha antigua). Se prueba en vivo. |
-| **5+ años** · Compounders | ROIC medio ≥ 15 %, ingresos ≥ 6 %/año, caja libre positiva 4 años, deuda neta/EBITDA ≤ 2,5, sin diluir. Se ordena por calidad y crecimiento; el precio se mide frente a lo que gana, no frente a su gráfico (un compounder vive en máximos). Sin bancos. | **No.** Se prueba en vivo. |
+| **3–5 años** · Calidad a precio razonable | De las empresas que pasan el cribado de calidad del bot: ROIC ≥ 12 %, ingresos ≥ 3 %/año, caja libre ≥ 6 % de ventas, deuda moderada y a un precio razonable (caja libre, PER o EV/EBIT bajos), sin estar disparada ni en caída libre. Sin bancos. | **Activo, en prueba.** Probado con cuentas de cada fecha: bate al S&P 500, pero **no demuestra ventaja** sobre elegir sin criterio entre las mismas empresas. |
+| **Dividendos** · Small caps | Small caps (S&P 600 + S&P 400) que pagan dividendo regular **sin recortarlo** (≥ 5 años pagando), con caja que lo cubre, poca deuda y sin diluir. Hasta 8 empresas, 2 por sector; se compara con el Russell 2000 (IWM). | **Activo.** No se ha podido probar en el pasado (faltan las empresas que quebraron); el seguimiento lo mide en vivo. |
+| ~~1–3 años~~ · Descuento con tesis | Empresas sólidas baratas frente a su propio rango de 5 años. | **Retirado** (no superó la prueba). |
+| ~~5+ años~~ · Compounders | ROIC medio ≥ 15 %, ingresos ≥ 6 %/año, caja libre positiva 4 años… | **Retirado** (no superó la prueba). |
 
-Las empresas se marcan con su **nivel**: *A* (análisis de IA favorable: COMPRA, VIGILAR) o *B* («solo
-cribado»: aún sin análisis de IA, léelas con más cautela). Las que la IA ya descartó (NO_INVERTIBLE,
-DESCARTE) no entran en ningún paquete. La IA y los chequeos **solo pueden quitar o avisar, nunca
-añadir**.
+Los paquetes retirados siguen codificados (`backend/mensual/paquetes.py`): se pueden volver a
+activar añadiéndolos a `ACTIVOS`. Las operaciones que ya tengas anotadas con ellos se conservan en el
+Vigía, marcadas «retirado».
 
-### Qué dijo la prueba histórica (y por qué el módulo es como es)
+### La prueba histórica de los paquetes (point-in-time) y su veredicto
 
-Con 504 empresas del S&P 500 (2012-2026, impuestos y comisiones incluidos), las reglas tal como
-se diseñaron **NO pasaron** los criterios fijados antes de ver los resultados:
+`prueba-paquetes.yml` (*Actions → Prueba histórica de los paquetes → Run workflow*, ~6 min con caché)
+reconstruye, cada fin de mes desde 2015, lo que habría elegido cada paquete **con las cuentas tal como
+se conocían en esa fecha** (la SEC guarda cuándo se presentó cada cifra) y el **mismo código** del bot.
+Mide la rentabilidad total bruta a 12, 24 y 36 meses frente al S&P 500 y frente a «cualquier empresa del
+listado a partes iguales». **Regla fijada antes de ver los resultados:** un paquete se mantiene solo si a
+12 **y** 24 meses supera a **ambos**. (El listado son las empresas que HOY están en el S&P 500, así que
+ya le ganan al índice por sí solas: aprobar no demuestra nada, suspender es una señal clara.)
+
+| Horizonte | S&P 500 | Listado a partes iguales | Solo las que pasan el cribado |
+|---|---:|---:|---:|
+| 12 m | 14,9 % | 18,6 % | 16,8 % |
+| 24 m | 32,0 % | 40,1 % | 36,7 % |
+| 36 m | 50,1 % | 63,1 % | 59,7 % |
+
+| Paquete | Exceso vs S&P 500 (12 / 24 / 36 m) | Exceso vs listado (12 / 24 / 36 m) | Veredicto |
+|---|---|---|---|
+| 1–3 años | +6,5 / +0,6 / +11,7 pp | +2,5 / **−8,4** / −3,0 pp | ❌ retirado: a 24 m no supera al listado |
+| 3–5 años | +4,1 / +9,4 / +8,5 pp | +0,5 / +1,3 / −4,5 pp | ✅ se mantiene **en prueba** |
+| 5+ años | +3,3 / +12,0 / +13,8 pp | **−0,4** / +3,9 / +0,9 pp | ❌ retirado: a 12 m no supera al listado (por 0,4 pp) |
+
+Lo que **no** dice (y conviene tener presente):
+- Los intervalos de confianza al 90 % de «exceso vs listado» incluyen el cero en los tres paquetes y
+  los tres horizontes: **ningún paquete ha demostrado que elegir aporte más que no elegir.**
+- El 5+ años se retiró por la mínima (−0,4 pp a 12 m, dentro del margen de error) y a 24 m iba por
+  delante; es reversible. La regla se fijó antes y se aplica tal cual.
+- El propio cribado de calidad rindió **menos** que el listado entero (−1,7 / −3,3 / −3,4 pp a 12 / 24 /
+  36 m), aunque sí batió al S&P 500.
+- Sesgo de supervivencia a favor de todos (solo empresas que hoy siguen en el índice). La IA y el
+  análisis de tesis no se pueden reconstruir en el pasado, así que no están en la prueba.
+
+### Qué dijo la prueba anterior (precio, 2012-2026)
+
+Con 504 empresas del S&P 500 (impuestos y comisiones incluidos), la regla de precio del antiguo
+paquete de 1–3 años **no pasó** los criterios fijados antes de ver los resultados:
 
 | | Rentab. anual tras impuestos |
 |---|---:|
@@ -142,40 +175,36 @@ se diseñaron **NO pasaron** los criterios fijados antes de ver los resultados:
 - La única variante que ganaba de largo («no vender nunca», 27,5 %) depende de **una sola empresa
   (AMD: 72 % de todas las ganancias)**. Sin ella baja a 16,0 %, prácticamente lo mismo que el control
   de supervivencia (15,4 %). Es sesgo de supervivencia, no una ventaja demostrada.
-- Conclusión honesta: **no hay evidencia de que la regla de compra bata al índice.** El backtest solo
-  puede decir «no» (le faltan las empresas que quebraron y el filtro de calidad no se puede probar
-  sin datos de la época). Por eso el módulo trae un **marcador** que compara tu resultado real con
-  poner exactamente los mismos flujos de dinero en el S&P 500. Es el juez: dale 12-24 meses con
-  importes que puedas permitirte, y si no gana, abandónalo.
+- Conclusión honesta: **no hay evidencia de que las reglas de compra batan al índice.** El módulo trae un
+  **marcador** que compara tu resultado real con poner exactamente los mismos flujos de dinero en el
+  S&P 500. Es el juez: dale 12-24 meses con importes que puedas permitirte, y si no gana, abandónalo.
 
 ### Cómo funciona cada mes
 
-1. `mensual.yml` (día 1 de cada mes, o a mano) ejecuta `python -m mensual.recomendador`.
+1. `mensual.yml` (día 1 de cada mes, o a mano) ejecuta `python -m mensual.recomendador --sin-ia`.
+   Ya **no usa Gemini ni Finnhub** (la IA solo servía al paquete de 1–3 años).
 2. Carga el universo desde Supabase (último cribado de cada empresa, con sus métricas) y descarga sus
    precios (Yahoo, gratis).
-3. **Paquete 1–3 años = lo que se probó:** señales de precio vs. su propio rango, máx. 4 y 2 por sector.
-   **Paquetes 3–5 y 5+:** puertas de calidad/crecimiento/precio y una puntuación 0-100 (calidad,
-   crecimiento, valoración, momento de 12 meses); máx. 6 y 8 empresas, 2 por sector.
+3. **Paquete 3–5 años:** puertas de calidad/crecimiento/precio y una puntuación 0-100 (calidad,
+   crecimiento, valoración, momento de 12 meses); máx. 6 empresas, 2 por sector.
+   **Dividendos** (`con_dividendos`, activado por defecto): módulo aparte sobre small caps (ver arriba).
 4. **Frenos que solo pueden quitar o avisar, nunca añadir:** precio por encima del rango de valor de la
-   tesis; chequeo del último trimestre publicado en la SEC (ingresos y margen interanuales); y, solo en
-   el paquete corto, la IA (Gemini) lee los titulares de Finnhub y dice si la caída parece temporal o
-   estructural. Solo veta «estructural con confianza alta»; si los titulares no explican la caída,
-   dice «incierto».
-5. **Seguimiento automático:** calcula cuánto habrían rendido las elecciones de los informes anteriores
-   (el primero de cada mes, para que no se pueda repetir hasta que salga uno bonito) frente al S&P 500
-   y frente al «resto del universo» (todas las elegibles de ese mes a partes iguales). Si los paquetes
-   baten al índice pero no al resto del universo, lo que funciona es el filtro de calidad, no la
-   selección. Además separa las elegidas con IA (A) de las «solo cribado» (B) para ver si la IA aporta.
-6. Guarda el informe en Supabase (`mensual_informes`) y abre un Issue con las elegidas de cada paquete.
+   tesis; chequeo del último trimestre publicado en la SEC (ingresos y margen interanuales). Las
+   empresas que el bot de largo plazo ya descartó (NO_INVERTIBLE, DESCARTE) no entran.
+5. **Seguimiento automático** (solo paquetes activos): calcula cuánto habrían rendido las elecciones de
+   los informes anteriores (el primero de cada mes, para que no se pueda repetir hasta que salga uno
+   bonito) frente al S&P 500 y frente al «resto del universo» (todas las elegibles de ese mes a partes
+   iguales); Dividendos, frente al Russell 2000. Si el paquete bate al índice pero no al resto del
+   universo, lo que funciona es el filtro de calidad, no la selección.
+6. Guarda el informe en Supabase (`mensual_informes`) y abre un Issue con las elegidas.
 7. La pestaña **Mensual** del Vigía lee ese informe: eliges paquete, escribes cuánto vas a invertir y
    reparte a partes iguales con tope por empresa (lo que no cabe NO se fuerza: se guarda para el mes
    siguiente). Las compras se etiquetan con su paquete y ves el resultado por horizonte.
 
-> **Honestidad sobre «encontrar ganadoras».** Nada de esto está demostrado que bata al S&P 500. El
-> backtest solo probó el precio, y sin ventaja. Los paquetes 3–5 y 5+ usan criterios clásicos de
-> calidad que no se pueden comprobar en el pasado con datos gratuitos (haría falta saber qué se
-> publicaba en cada fecha: usar las cuentas de hoy contaría el futuro como si se supiera). La
-> respuesta honesta es el seguimiento en vivo: 12–24 meses de cohortes mensuales.
+> **Honestidad sobre «encontrar ganadoras».** Nada de esto está demostrado que bata al S&P 500 más
+> allá de lo que ya consigue cualquier selección de empresas supervivientes. La prueba histórica
+> descarta lo que ni con esa ventaja gana; lo que queda se mantiene **en prueba**, y el juez es el
+> seguimiento en vivo (12–24 meses de cohortes mensuales) y tu marcador frente al S&P 500.
 
 ### Privacidad: tu cartera nunca sale de tu móvil
 
@@ -193,14 +222,19 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `backend/mensual/estrategia.py` | Las reglas (señales, candidatas, reparto, venta) como funciones puras; las usan el backtest y el recomendador. |
 | `backend/mensual/backtest.py` | Motor del backtest, controles (S&P 500, supervivencia, azar), veredicto, anexo de robustez. |
 | `backend/mensual/precios.py` | Descarga de precios (Yahoo Finance, gratis) y universo S&P 500 con su sector. |
-| `backend/mensual/recomendador.py` | El informe mensual (universo, tres paquetes, frenos, seguimiento) y el Markdown del Issue. |
-| `backend/mensual/paquetes.py` | Reglas y puntuación de los paquetes 3–5 y 5+ años (funciones puras, sin red). |
+| `backend/mensual/recomendador.py` | El informe mensual (universo, paquetes activos, frenos, seguimiento) y el Markdown del Issue. |
+| `backend/mensual/paquetes.py` | Reglas y puntuación de los paquetes de calidad; `ACTIVOS` dice cuáles se ofrecen (hoy solo 3–5 años). Funciones puras, sin red. |
+| `backend/mensual/pit.py` | Cuentas de la SEC «tal como se conocían» en cada fecha (point-in-time) para probar los paquetes en el pasado. |
+| `backend/mensual/prueba_calidad.py` | La prueba histórica de los paquetes y su veredicto (regla fijada de antemano). |
+| `backend/mensual/dividendos.py` | Sección de small caps con dividendo constante (S&P 600 + S&P 400) y su seguimiento frente al Russell 2000. |
 | `backend/mensual/seguimiento.py` | Seguimiento: cuánto habrían rendido las elecciones pasadas frente al S&P 500 y al universo. |
 | `backend/mensual/salud.py` | Chequeo del último trimestre (EDGAR, gratis). |
-| `backend/mensual/explicacion.py` | «¿Por qué ha caído?»: titulares + Gemini, con veto solo si «estructural + alta». |
+| `backend/mensual/explicacion.py` | «¿Por qué ha caído?»: titulares + Gemini (solo lo usaba el paquete 1–3 años, hoy retirado). |
 | `db/006_mensual.sql` | Tabla del informe y vista pública de solo lectura (aplicar en el SQL Editor de Supabase). |
 | `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Mensual. |
 | `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano. |
+| `.github/workflows/prueba-paquetes.yml` | Prueba histórica de los paquetes con cuentas de cada fecha (a mano; informe en *Summary*). |
+| `.github/workflows/dividendos.yml` | Sección de dividendos suelta (a mano), con opción de depurar empresas concretas. |
 | `.github/workflows/backtest-mensual.yml` | Repite la prueba histórica a mano (informe en *Summary*; zip en *Artifacts*). |
 
 **Para activarlo:** (1) pega `db/006_mensual.sql` en Supabase → SQL Editor → Run; (2) pestaña

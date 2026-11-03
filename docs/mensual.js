@@ -16,7 +16,10 @@
   const TOPE_POSICION = 0.25;
   const MESES_REVISION = 24;
   const TESIS_ANTIGUA_DIAS = 200;
-  const PAQUETES = ["corto", "medio", "largo", "dividendos"]; // 1-3 años, 3-5 años, 5+ años, small caps con dividendo
+  // Etiquetas válidas en una operación. «corto» (1-3 años) y «largo» (5+ años) están RETIRADOS
+  // (no superaron la prueba histórica) pero se aceptan para no perder las operaciones ya
+  // anotadas con ese paquete. Los activos hoy son «medio» (3-5 años) y «dividendos».
+  const PAQUETES = ["corto", "medio", "largo", "dividendos"];
 
   // ───────────────────────── fechas ─────────────────────────
 

@@ -11,17 +11,19 @@ Una vez al mes (GitHub Actions) y cuando tú quieras a mano:
      IA). Las que la IA ya analizó y rechazó (NO_INVERTIBLE, DESCARTE) se
      quitan; a las que no tienen análisis aún se les avisa de ello («solo
      cribado»).
-  2. Descarga sus precios (Yahoo, gratis) y arma TRES PAQUETES por horizonte:
-       · corto  (1–3 años): la regla de precio que se probó en el backtest:
-         baratas frente a su propio rango de 5 años, sin estar hundidas y
-         habiendo dejado de caer.
-       · medio  (3–5 años): calidad a precio razonable.
-       · largo  (5+ años):  compounders (rentabilidad, crecimiento, caja).
-     Máx. 2 por sector en cada paquete.
+  2. Descarga sus precios (Yahoo, gratis) y arma los paquetes por horizonte que
+     están ACTIVOS (`paquetes.ACTIVOS`). Hoy solo «medio»: la prueba histórica
+     (workflow «Prueba histórica de los paquetes») dejó fuera a «corto» y
+     «largo» porque no superaron a una selección sin criterio del mismo listado.
+       · corto  (1–3 años): baratas frente a su propio rango de 5 años.   [desactivado]
+       · medio  (3–5 años): calidad a precio razonable.                    [ACTIVO]
+       · largo  (5+ años):  compounders (rentabilidad, crecimiento, caja). [desactivado]
+     Máx. 2 por sector en cada paquete. Aparte, la sección de small caps con
+     dividendo (`dividendos.py`).
   3. Pasa las finalistas por frenos que SOLO pueden quitar o avisar, nunca
      añadir:  (a) precio por encima del rango de valor de la tesis,
      (b) chequeo del último trimestre publicado (ingresos y margen),
-     (c) solo en el paquete corto: la IA lee los titulares y dice si la caída
+     (c) solo si «corto» está activo: la IA lee los titulares y dice si la caída
      parece temporal o estructural (veta solo «estructural + confianza alta»).
   4. SEGUIMIENTO: calcula cuánto habrían rendido las elecciones de los
      informes anteriores frente al S&P 500 y al resto del universo.
@@ -176,6 +178,7 @@ def generar_informe(
     f_tesis_texto=None,    # (ticker) -> str | None
     reglas: ReglasPaquetes | None = None,
     previos: list[dict] | None = None,   # filas de mensual_informes, para el seguimiento
+    activos: tuple[str, ...] | None = None,   # paquetes que se ofrecen (por defecto, los de `paquetes.ACTIVOS`)
 ) -> dict:
     """Construye el informe mensual con sus tres paquetes.
 
@@ -188,6 +191,7 @@ def generar_informe(
     from .explicacion import veta
 
     reglas = dataclasses.replace(reglas or ReglasPaquetes(), n_corto=p.n_max, n_max_sector=p.n_max_sector)
+    activos = tuple(activos if activos is not None else pq.ACTIVOS)
     avisos: list[str] = []
     acciones = precios.drop(columns=[BENCHMARK], errors="ignore")
     if acciones.empty:
@@ -313,7 +317,10 @@ def generar_informe(
                 estado_ia["agotada"] = True
         return None
 
-    corto = recorrer("corto", ordenadas, p.n_max, post=post_corto)
+    if "corto" in activos:
+        corto = recorrer("corto", ordenadas, p.n_max, post=post_corto)
+    else:
+        corto = ([], [], [])        # paquete desactivado por la prueba histórica (ver paquetes.py)
 
     # ===================== paquetes MEDIO y LARGO ================================ #
     def post_calidad(reg, c):
@@ -322,9 +329,9 @@ def generar_informe(
             reg["tesis"] = f_tesis_texto(reg["ticker"])
         return None
 
-    resultado = {"corto": corto}
-    n_aptas = {"corto": len(ordenadas)}
-    for paquete in ("medio", "largo"):
+    resultado = {"corto": corto} if "corto" in activos else {}
+    n_aptas = {"corto": len(ordenadas)} if "corto" in activos else {}
+    for paquete in [x for x in ("medio", "largo") if x in activos]:
         evals: dict[str, dict] = {}
         for k, c in enumerate(cols):
             if not con_senal[k] or c not in por_col:
@@ -341,10 +348,10 @@ def generar_informe(
         resultado[paquete] = recorrer(paquete, [pos[c] for c in orden], reglas.n_de(paquete),
                                       evals=evals, post=post_calidad)
 
-    if estado_ia["agotada"]:
+    if "corto" in activos and estado_ia["agotada"]:
         avisos.append(f"Se agotó el límite de {max_ia} análisis de IA: las últimas candidatas del "
                       "paquete corto van sin explicación de la IA.")
-    if usar_ia and f_ia is None:
+    if "corto" in activos and usar_ia and f_ia is None:
         avisos.append("Sin IA en esta ejecución (falta la clave de Gemini): las candidatas del paquete "
                       "corto van sin la explicación de «por qué ha caído».")
 
@@ -422,7 +429,8 @@ def generar_informe(
         "candidatas": corto[0],
         "vetadas": corto[1],
         "en_espera": corto[2],
-        "paquetes": {c: paquete_json(c) for c in pq.PAQUETES},
+        "paquetes": {c: paquete_json(c) for c in activos},
+        "paquetes_activos": list(activos),
         "empresas": empresas,
         # Control del seguimiento: todas las elegibles de este mes, a partes iguales.
         "universo": sorted(c for k, c in enumerate(cols) if con_senal[k]),
@@ -483,12 +491,13 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
       "compararlas con su propio rango de 5 años.\n")
 
     paq = inf.get("paquetes") or {}
-    cands = inf["candidatas"]
-    A("### 📅 1–3 años · Descuento con tesis\n")
-    if not cands:
+    cands = inf["candidatas"] if "corto" in paq else []
+    if "corto" in paq:
+        A("### 📅 1–3 años · Descuento con tesis\n")
+    if "corto" in paq and not cands:
         A("**Este mes no hay nada claramente barato frente a su propio historial.** "
           "No hace falta forzar ninguna compra: el dinero puede esperar.\n")
-    else:
+    elif cands:
         A("| Empresa | Precio | Bajo su mediana 5a | Rango de valor (tesis) | Nivel | ¿Por qué ha caído? (IA) |")
         A("|---|---:|---:|---:|---|---|")
         for c in cands:
@@ -547,7 +556,7 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
         A("**Reparto orientativo:** a partes iguales dentro de cada paquete, con tope por empresa. "
           "Cuánto compras de cada una depende de tu importe y de lo que ya tengas: "
           "se calcula en tu móvil.\n")
-    if inf["vetadas"]:
+    if "corto" in paq and inf["vetadas"]:
         A("**En el paquete de 1–3 años pasaron el filtro de precio pero las frenó otro chequeo:**")
         for v in inf["vetadas"]:
             A(f"- {v['ticker']}: {v['motivo']}")
@@ -608,9 +617,9 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
     if url_dashboard:
         A(f"👉 [Abrir el Vigía → pestaña Mensual]({url_dashboard}) para ver cuánto comprar con tu "
           "importe, elegir paquete y revisar tu cartera.\n")
-    A("_Información automática, no asesoramiento financiero. Los paquetes medio y largo no se han "
-      "podido probar en el pasado: se ponen a prueba en vivo con el seguimiento de arriba. "
-      "El marcador del Vigía compara tu resultado real con el S&P 500._")
+    A("_Información automática, no asesoramiento financiero. Los paquetes que no superaron la prueba "
+      "histórica (1–3 y 5+ años) están desactivados; los que quedan se ponen a prueba en vivo con el "
+      "seguimiento de arriba. El marcador del Vigía compara tu resultado real con el S&P 500._")
     return "\n".join(L)
 
 
@@ -727,7 +736,7 @@ def descargar(tickers: list[str], anios: int = 6, min_cobertura: float = 0.70) -
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Recomendador mensual de oportunidades.")
-    ap.add_argument("--sin-ia", action="store_true", help="no llamar a Gemini ni a Finnhub")
+    ap.add_argument("--sin-ia", action="store_true", help="no llamar a Gemini ni a Finnhub (solo se usan si el paquete «corto» está activo)")
     ap.add_argument("--max-ia", type=int, default=8, help="máximo de análisis de IA por ejecución")
     ap.add_argument("--sin-supabase", action="store_true", help="no guardar el informe en la base de datos")
     ap.add_argument("--salida", default="informe_mensual.json", help="dónde escribir el JSON")
@@ -799,14 +808,14 @@ def main() -> None:
 
     r = inf["resumen"]
     print(f"\nResumen: {r['n_lista']} elegibles · {r['n_con_senal']} con señal · aptas {r['n_aptas']}")
-    for clave in pq.PAQUETES:
-        P = inf["paquetes"][clave]
+    for clave, P in inf["paquetes"].items():
         print(f"  [{P['etiqueta']}] {[c['ticker'] for c in P['candidatas']]}")
-    print(f"  vetadas (corto): {[v['ticker'] for v in inf['vetadas']]}")
+    if "corto" in inf["paquetes"]:
+        print(f"  vetadas (corto): {[v['ticker'] for v in inf['vetadas']]}")
     # Detalle de las elegidas (datos públicos de empresas): sirve para comprobar en el registro
     # de la ejecución que la SEC (último trimestre) y la IA han respondido de verdad.
-    for clave in pq.PAQUETES:
-        for c in inf["paquetes"][clave]["candidatas"]:
+    for clave, P in inf["paquetes"].items():
+        for c in P["candidatas"]:
             s = c.get("salud")
             ia = c.get("ia")
             print(f"    {clave:5} {c['ticker']:6} nivel={c['tier']} precio={c['precio']} "

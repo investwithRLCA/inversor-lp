@@ -13,14 +13,22 @@ trabajo y pagar un precio normal por una empresa excelente sale bien).
 
 LO QUE ESTO ES Y NO ES — importante para no engañarse:
 
-  · Las reglas de «medio» y «largo» son criterios clásicos (rentabilidad sobre
-    el capital, crecimiento, caja, deuda, dilución, precio razonable) pero NO
-    están probadas en el pasado: para probarlas hacen falta los datos
-    financieros tal y como se conocían en cada fecha antiguas, y no los
-    tenemos gratis (usarlos de hoy contaría el futuro como si se supiera).
-  · Por eso el sistema las pone a prueba EN VIVO: cada mes apunta qué habría
-    elegido cada paquete y lo compara con el S&P 500 y con el resto del
-    universo (ver `seguimiento.py`). Ese seguimiento es el juez.
+  · Se probó cada paquete en el histórico (2015-2025, S&P 500) con las cuentas
+    TAL COMO SE CONOCÍAN en cada fecha (`pit.py`, `prueba_calidad.py`, workflow
+    «Prueba histórica de los paquetes»), con una regla de decisión fijada antes
+    de ver los resultados: un paquete se mantiene solo si a 12 y a 24 meses
+    supera al S&P 500 Y a una selección sin criterio del mismo listado.
+        corto  → NO supera al listado a 24 meses (-8,4 pp)           → desactivado
+        medio  → supera a ambos (por poco; indistinguible del listado) → ACTIVO, en prueba
+        largo  → a 12 meses queda 0,4 pp por debajo del listado        → desactivado
+    Aprobar no demuestra nada (el listado son las empresas que HOY siguen en el
+    índice y ya ganan solas al S&P 500); suspender sí es una señal clara.
+  · Los paquetes desactivados siguen programados: se reactivan añadiéndolos a
+    `ACTIVOS` (aquí abajo). No se borran por si el seguimiento en vivo los
+    rehabilita.
+  · El seguimiento en vivo (`seguimiento.py`) sigue siendo el juez: cada mes
+    apunta qué habría elegido cada paquete activo y lo compara con el S&P 500 y
+    con el resto del universo.
   · La IA y los chequeos solo pueden QUITAR o AVISAR; no añaden empresas. Aquí
     todo parte de las empresas que ya pasaron el cribado cuantitativo del bot.
 
@@ -32,7 +40,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-PAQUETES = ("corto", "medio", "largo")
+PAQUETES = ("corto", "medio", "largo")      # todos los que el módulo sabe calcular
+# Los que se ofrecen hoy. «corto» y «largo» quedaron desactivados por la prueba
+# histórica (ver arriba); para volver a activarlos basta con añadirlos aquí.
+ACTIVOS = ("medio",)
 
 INFO = {
     "corto": {
