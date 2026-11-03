@@ -7,9 +7,12 @@ una selección sin criterio del mismo grupo? ¿Cuántas veces acierta y cuánto 
 buenas frente a lo que pierden las malas?
 
 Universo: las empresas que HOY están en el S&P 500, S&P 400, S&P 600, Russell 2000 o
-Nasdaq-100 (docs/mercados.json), ~2.900. En cada fecha se separan por tamaño de ese día:
-  · «grandes»: las 1.000 mayores (≈ Russell 1000) → se comparan con el S&P 500 (SPY);
-  · «pequeñas»: el resto con más de 300 M$ (≈ Russell 2000) → con el Russell 2000 (IWM).
+Nasdaq-100 (docs/mercados.json), ~2.900. En cada fecha se separan por su tamaño ESE día:
+  · «grandes»: más de 5.000 M$ → se comparan con el S&P 500 (SPY);
+  · «pequeñas»: entre 300 y 5.000 M$ (≈ rango del Russell 2000) → con el Russell 2000 (IWM).
+(Una primera versión partía por puesto — las 1.000 mayores del universo — y fallaba en los
+primeros años: como el universo son las empresas de HOY, en 2015-2018 apenas había
+«pequeñas» y las «grandes» mezclaban medianas. Por eso el corte es por tamaño en dólares.)
 
 Variantes (fijadas antes de ver resultados):
   · lynch: solo las reglas de Lynch (lynch.py) → las 15 con más puntos, máx. 3 por sector;
@@ -50,10 +53,10 @@ HORIZONTES = (12, 24, 36)
 VARIANTES = ("lynch", "lynch_cribado")
 GRUPOS = ("grandes", "pequenas")
 NOMBRE_VAR = {"lynch": "Filtro Lynch", "lynch_cribado": "Filtro Lynch + cribado de calidad del bot"}
-NOMBRE_GRUPO = {"grandes": "Grandes (las 1.000 mayores)", "pequenas": "Pequeñas (resto, > 300 M$)"}
+NOMBRE_GRUPO = {"grandes": "Grandes (> 5.000 M$)", "pequenas": "Pequeñas (300–5.000 M$)"}
 BENCH = {"grandes": "SPY", "pequenas": "IWM"}
 NOMBRE_BENCH = {"grandes": "S&P 500", "pequenas": "Russell 2000"}
-N_GRANDES = 1000
+CAP_GRANDE = 5_000.0      # M$ en esa fecha
 CAP_MIN = 300.0
 N_ELEGIDAS = 15
 MAX_SECTOR = 3
@@ -116,11 +119,9 @@ def calcular(adj: pd.DataFrame, pit: FuentePIT, sectores: dict[str, str], inicio
             res_l[k] = f
             caps[k] = f.market_cap
         validas = np.isfinite(caps) & (caps >= CAP_MIN)
-        orden_cap = np.argsort(-np.where(validas, caps, -1))
-        n_val = int(validas.sum())
         grupo = np.full(len(cols), "", dtype=object)
-        grupo[orden_cap[:min(N_GRANDES, n_val)]] = "grandes"
-        grupo[orden_cap[min(N_GRANDES, n_val):n_val]] = "pequenas"
+        grupo[validas & (caps >= CAP_GRANDE)] = "grandes"
+        grupo[validas & (caps < CAP_GRANDE)] = "pequenas"
 
         pts = {v: np.full(len(cols), np.nan) for v in VARIANTES}
         cat = {}
@@ -322,8 +323,8 @@ def informe_md(res: Resultado, desde: str, n_univ: int, n_sec: int) -> str:
       f"Cada fin de mes desde {desde[:7]} se eligen las {N_ELEGIDAS} con más puntos (máx. {MAX_SECTOR} por sector) y se "
       "mantienen 12, 24 o 36 meses. Rentabilidades totales **brutas** (dividendos incluidos; sin impuestos ni comisiones).\n")
     A(f"Universo: empresas que hoy están en el S&P 500, S&P 400, S&P 600, Russell 2000 o Nasdaq-100 ({n_univ}; {n_sec} con "
-      "cuentas utilizables en la SEC). En cada fecha se separan por tamaño: **grandes** = las 1.000 mayores (frente al S&P 500) "
-      "y **pequeñas** = el resto con más de 300 M$ (frente al Russell 2000). **Sesgo de supervivencia:** faltan las que quebraron "
+      "cuentas utilizables en la SEC). En cada fecha se separan por su tamaño ese día: **grandes** = más de 5.000 M$ (frente al "
+      "S&P 500) y **pequeñas** = entre 300 y 5.000 M$ (frente al Russell 2000). **Sesgo de supervivencia:** faltan las que quebraron "
       "o desaparecieron; por eso se compara también con «cualquier empresa del mismo grupo a partes iguales».\n")
     A("**Regla de decisión (fijada antes de ver los resultados):** una variante vale en un grupo solo si a 12 y a 24 meses su "
       "rentabilidad media supera al índice **y** a la media del grupo. Aprobar no demuestra nada; suspender es una señal clara.\n")
