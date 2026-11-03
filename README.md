@@ -415,6 +415,19 @@ obsoletos sin tener que borrar la base de datos.
   fuente; el resto de la arquitectura no cambia.
 - Las etiquetas XBRL varían entre empresas. `CONCEPTS` prueba varias por concepto, pero
   para casos raros tendrás que añadir la etiqueta a la lista.
+- **Ingresos de sectores especiales** (`providers.py`): los bancos, financieras de crédito y
+  REIT hipotecarios no publican «ventas»; sus ingresos se calculan como margen de intereses +
+  ingresos no financieros (o «ingresos netos de intereses», como Goldman). Eléctricas y REIT
+  de alquiler usan sus etiquetas propias, solo dentro de su sector. En aseguradoras, si
+  «contratos con clientes» es solo una parte, manda el total. Si una empresa dejó de usar una
+  etiqueta, cada año sale de la que sí lo tenga. Las reorganizadas con CIK nuevo (XOM tras su
+  traslado a Texas, NAVI, DMRC, XPRO) suman la historia del CIK anterior (`PREDECESORAS`).
+  Siguen fuera, con un mensaje claro: las que no tienen ventas (biotecnológicas en fase
+  clínica, mineras en desarrollo), las que aún no han presentado un 10-K (salidas a bolsa o
+  escisiones recientes), las extranjeras en IFRS y unas pocas que publican sus ingresos con
+  etiquetas propias de la empresa (p. ej. MTH, APA), que la API de la SEC no ofrece.
+  `diag_ingresos.py` (workflow «Diagnóstico de ingresos») revisa qué etiquetas tiene cada
+  empresa; el barrido tiene la opción «reintentar» para repasar ya las que fallaron.
 - (Corregido) `SecEdgarProvider` creaba una instancia nueva por ticker y volvía a
   descargar el listado completo de EDGAR (varios MB) en cada una — un barrido de 100
   tickers lo descargaba 100 veces. Ahora hay una caché a nivel de proceso compartida por
