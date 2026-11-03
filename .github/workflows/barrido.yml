@@ -5,34 +5,44 @@ name: Barrido de descubrimiento
 # Para mantener al día las que YA tienen un análisis guardado, ver
 # refresco.yml — es una cola totalmente aparte.
 #
-# Antes corría 1 vez al día; con el cuello de botella de la descarga
-# repetida del listado de tickers ya arreglado (ver providers.py) y el
-# cribado en paralelo, cada ejecución es varias veces más rápida, así que
-# ahora corre cada 4 horas (6 veces al día) para cubrir el universo mucho
-# antes.
+# Nov-2026: GitHub dejaba caer casi todas las ejecuciones programadas «en
+# punto» (solo salía ~1 al día de 6). Ahora va cada 2 horas en un minuto poco
+# concurrido, con lotes de 400 y prioridad a las empresas de índices (ver
+# run_universo.py). Lo que pasa el cribado y no cabe en el cupo de IA queda
+# en cola para la siguiente ejecución.
 
 on:
   schedule:
-    - cron: "0 */4 * * *"       # cada 4 horas, en UTC
+    - cron: "17 */2 * * *"      # cada 2 horas, minuto 17, en UTC
   workflow_dispatch:
     inputs:
       lote:
         description: "Tickers a procesar en esta ejecución"
         required: false
-        default: "100"
+        default: "400"
       max_ia:
         description: "Máximo de llamadas a la IA en esta ejecución"
         required: false
-        default: "20"
+        default: "25"
       solo_cribado:
         description: "Solo cribar, sin llamar a la IA"
         type: boolean
         required: false
         default: false
+      solo_estado:
+        description: "No procesar nada: solo mostrar cómo va el barrido"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: barrido
+  cancel-in-progress: false
 
 jobs:
   barrido:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +65,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: >
           python run_universo.py
-          --lote ${{ github.event.inputs.lote || '100' }}
-          --max-ia ${{ github.event.inputs.max_ia || '20' }}
+          --lote ${{ github.event.inputs.lote || '400' }}
+          --max-ia ${{ github.event.inputs.max_ia || '25' }}
           ${{ (github.event.inputs.solo_cribado == 'true') && '--solo-cribado' || '' }}
+          ${{ (github.event.inputs.solo_estado == 'true') && '--estado' || '' }}

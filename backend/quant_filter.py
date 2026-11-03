@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from providers import Fundamentals
 
-RULESET_VERSION = "quant-1.2"
+RULESET_VERSION = "quant-1.3"      # 1.3 (nov-2026): mínimo de capitalización 1.000 → 300 M$
 
 
 # --------------------------------------------------------------------------- #
@@ -191,7 +191,9 @@ def compute_metrics(f: Fundamentals) -> Metrics:
 @dataclass
 class Thresholds:
     # Vetos
-    min_market_cap: float = 1_000.0        # M — evita micro caps ilíquidas
+    # M$. Antes 1.000: dejaba fuera a la mitad pequeña del Russell 2000 (va de ~150 a ~5.700 M$).
+    # Por debajo de ~300 M$ son micro caps: poco líquidas, menos seguidas y con más fraudes contables.
+    min_market_cap: float = 300.0
     min_years_data: int = 4
     max_per: float = 45.0                  # sin margen de seguridad posible por encima
     max_debt_equity: float = 2.0
