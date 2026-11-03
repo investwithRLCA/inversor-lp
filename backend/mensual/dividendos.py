@@ -62,6 +62,7 @@ IWM = "IWM"
 URL_IWM = ("https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
            "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund")
 URL_IWM_PRODUCTO = "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
+URL_IWM_ULTIMAS = "https://www.ishares.com/us/products/239710/x/latest-holdings.csv"   # la que funciona (nov-2026)
 URL_SP600 = "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies"
 URL_SP400 = "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies"
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) inversor-lp/1.0"}
@@ -743,6 +744,12 @@ def _tabla_ishares() -> pd.DataFrame:
             df = df[df["Asset Class"].astype(str).str.strip().str.lower() == "equity"]
         return df
 
+    try:
+        df = tabla(pedir(URL_IWM_ULTIMAS))
+        if df is not None and len(df):
+            return df
+    except Exception:  # noqa: BLE001  (se prueban las demás)
+        pass
     texto = pedir(URL_IWM)
     df = tabla(texto)
     if df is not None and len(df):

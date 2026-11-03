@@ -25,6 +25,7 @@ import argparse
 import io
 import json
 import os
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -59,6 +60,7 @@ URL_IWM_AJAX = ("https://www.ishares.com/us/products/239710/ishares-russell-2000
                 "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund")
 URL_VTWO = "https://investor.vanguard.com/vmf/api/VTWO/portfolio-holding/stock.json"
 URL_SEC_BOLSA = "https://www.sec.gov/files/company_tickers_exchange.json"
+URL_NDX_API = "https://api.nasdaq.com/api/quote/list-type/nasdaq100"
 
 
 # --------------------------------------------------------------------------- #
@@ -140,16 +142,36 @@ def bolsas_sec(js: dict) -> dict[str, list[str]]:
     return {"nasdaq": limpiar(nas), "nyse": limpiar(nyse)}
 
 
+def _cabecera(c) -> str:
+    """Nombre de columna limpio: sin notas al pie «[1]» y, si es doble, su último nivel."""
+    if isinstance(c, tuple):
+        if any(str(x).strip().lower() in ("added", "removed") for x in c):
+            return ""                            # tablas de altas y bajas del índice
+        c = c[-1]
+    return re.sub(r"\[.*?\]", "", str(c)).strip().lower()
+
+
 def tickers_wikipedia(html: str, minimo: int) -> list[str]:
     """Primera tabla de Wikipedia con columna Symbol/Ticker y al menos `minimo` filas."""
     for t in pd.read_html(io.StringIO(html)):
-        col = next((c for c in t.columns if str(c).strip().lower() in ("symbol", "ticker", "ticker symbol")), None)
+        col = next((c for c in t.columns if _cabecera(c) in ("symbol", "ticker", "ticker symbol", "stock symbol")), None)
         if col is None:
             continue
         ts = limpiar(t[col].dropna().tolist())
         if len(ts) >= minimo:
             return ts
     return []
+
+
+def cabeceras_wikipedia(html: str) -> list[str]:
+    """Para el diagnóstico: columnas y filas de cada tabla de la página."""
+    return [f"{len(t)} filas: {[str(c) for c in t.columns][:6]}" for t in pd.read_html(io.StringIO(html))]
+
+
+def tickers_nasdaq_api(js: dict) -> list[str]:
+    """api.nasdaq.com (lista del Nasdaq-100) → tickers."""
+    filas = (((js or {}).get("data") or {}).get("data") or {}).get("rows") or []
+    return limpiar([f.get("symbol") for f in filas if f.get("symbol")])
 
 
 def construir(nuevas: dict[str, dict], previo: dict | None, hoy: str) -> dict:
@@ -237,12 +259,33 @@ def sp500() -> dict:
     return wikipedia("sp500", URL_SP500_WIKI)
 
 
-def wikipedia(cod: str, url: str) -> dict:
+def wikipedia(cod: str, url: str, detalle: bool = False) -> dict:
     try:
-        ts = tickers_wikipedia(_get(url).text, MERCADOS[cod][1])
+        html = _get(url).text
+        ts = tickers_wikipedia(html, MERCADOS[cod][1])
+        if not ts and detalle:
+            print(f"  Wikipedia {cod}: tablas → " + " | ".join(cabeceras_wikipedia(html)[:8]))
         return {"tickers": ts, "fuente": "Wikipedia"} if ts else {"error": "tabla no encontrada en Wikipedia"}
     except Exception as e:  # noqa: BLE001
         return {"error": f"Wikipedia: {type(e).__name__}"}
+
+
+def nasdaq100(detalle: bool = False) -> dict:
+    w = wikipedia("ndx", URL_NDX_WIKI, detalle)
+    if w.get("tickers"):
+        return w
+    try:
+        cab = {**UA_WEB, "Accept": "application/json, text/plain, */*", "Origin": "https://www.nasdaq.com",
+               "Referer": "https://www.nasdaq.com/", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
+        ts = tickers_nasdaq_api(_get(URL_NDX_API, cab, 30).json())
+        if detalle:
+            print(f"  api.nasdaq.com: {len(ts)} empresas")
+        if len(ts) >= MERCADOS["ndx"][1]:
+            return {"tickers": ts, "fuente": "nasdaq.com"}
+        return {"error": f"{w.get('error')}; nasdaq.com: {len(ts)} empresas"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{w.get('error')}; nasdaq.com: {type(e).__name__}"}
 
 
 def bolsas() -> dict[str, dict]:
@@ -258,7 +301,7 @@ def bolsas() -> dict[str, dict]:
 def descargar(detalle: bool = False) -> dict[str, dict]:
     nuevas: dict[str, dict] = {
         "sp500": sp500(),
-        "ndx": wikipedia("ndx", URL_NDX_WIKI),
+        "ndx": nasdaq100(detalle),
         "r2000": russell2000(detalle),
         "sp400": wikipedia("sp400", URL_SP400_WIKI),
         "sp600": wikipedia("sp600", URL_SP600_WIKI),
