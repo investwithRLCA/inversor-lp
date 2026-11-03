@@ -1,0 +1,88 @@
+name: Prueba histórica del filtro Lynch
+
+# ¿Habría batido al mercado el filtro Peter Lynch (backend/lynch.py)?
+#
+# Reconstruye, mes a mes desde 2015, qué empresas habrían pasado el filtro con
+# las cuentas TAL COMO SE CONOCÍAN en cada fecha (SEC), en ~2.900 empresas
+# (S&P 500, S&P 400, S&P 600, Russell 2000 y Nasdaq-100), separando grandes
+# (frente al S&P 500) y pequeñas (frente al Russell 2000). Mide rentabilidad a
+# 12, 24 y 36 meses, % de aciertos y ganancia/pérdida de las que aciertan y fallan.
+#
+# Lanzarlo a mano: pestaña "Actions" → "Prueba histórica del filtro Lynch" → "Run workflow".
+# El resultado aparece en la página de la ejecución (resumen). La primera vez tarda
+# ~1 hora (descarga las cuentas de ~2.900 empresas); después usa la caché.
+# Solo usa datos públicos de empresas: nada de tu cartera.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_empresas:
+        description: "Solo para pruebas: limitar a las N primeras empresas (0 = todas)"
+        type: string
+        required: false
+        default: "0"
+      inicio:
+        description: "Primera fecha de selección (AAAA-MM-DD)"
+        type: string
+        required: false
+        default: "2015-01-01"
+
+permissions:
+  contents: read
+
+jobs:
+  probar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements-backtest.txt
+
+      - name: Recuperar las cuentas de la SEC ya descargadas
+        uses: actions/cache/restore@v4
+        with:
+          path: backend/.cache_pit
+          key: pit-v2-${{ github.run_id }}
+          restore-keys: |
+            pit-v2-
+
+      - name: Probar el filtro Lynch en el histórico
+        working-directory: backend
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          MAX_EMPRESAS: ${{ github.event.inputs.max_empresas || '0' }}
+          INICIO: ${{ github.event.inputs.inicio || '2015-01-01' }}
+        run: |
+          N="${MAX_EMPRESAS//[^0-9]/}"
+          python -W ignore -m mensual.prueba_lynch --max-empresas "${N:-0}" --inicio "$INICIO" --salida resultados_lynch
+
+      - name: Guardar las cuentas descargadas para la próxima vez
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: backend/.cache_pit
+          key: pit-v2-${{ github.run_id }}
+
+      - name: Mostrar el informe en la página de la ejecución
+        if: always()
+        run: |
+          if [ -f backend/resultados_lynch/informe.md ]; then
+            cat backend/resultados_lynch/informe.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No se generó informe (mira el log del paso anterior)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guardar resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prueba-lynch
+          path: backend/resultados_lynch/
+          if-no-files-found: ignore

@@ -38,7 +38,7 @@ from providers import BALANCE_CONCEPTS, CONCEPTS, M, Fundamentals, SecEdgarProvi
 log = logging.getLogger(__name__)
 
 FORMULARIOS = ("10-K", "10-K/A", "20-F")
-VERSION_CACHE = 1
+VERSION_CACHE = 2              # 2: añade el inventario (filtro Lynch); el nombre del fichero lleva la versión
 MAX_EDAD_BALANCE_DIAS = 450      # un dato de balance más viejo que esto frente a las ventas se ignora
 MAX_EDAD_CUENTAS_DIAS = 640      # si las últimas cuentas publicadas tienen > ~21 meses, la empresa no cuenta
 
@@ -125,11 +125,13 @@ class FuentePIT:
     def __init__(self, datos: dict[str, dict] | None = None, anios: int = 5):
         self.datos: dict[str, dict] = datos or {}
         self.anios = anios
+        self._presentaciones: dict[str, list[str]] = {}
+        self._cache: dict[tuple[str, str], tuple[Fundamentals, str] | None] = {}
 
     # -- disco -------------------------------------------------------------- #
     @staticmethod
     def _ruta(carpeta: Path, ticker: str) -> Path:
-        return Path(carpeta) / f"{ticker.replace('/', '_')}.json.gz"
+        return Path(carpeta) / f"{ticker.replace('/', '_')}.v{VERSION_CACHE}.json.gz"
 
     @classmethod
     def cargar(cls, carpeta: Path, tickers: list[str], anios: int = 5) -> "FuentePIT":
@@ -194,13 +196,49 @@ class FuentePIT:
         return cls.cargar(carpeta, tickers, anios)
 
     # -- consulta ----------------------------------------------------------- #
+    def _ultima_presentacion(self, ticker: str, corte: str) -> str | None:
+        """Fecha de la última presentación a la SEC hasta `corte` (lo que cambia los datos)."""
+        if ticker not in self._presentaciones:
+            fechas = {pres for por_tag in self.datos[ticker]["conceptos"].values()
+                      for filas in por_tag.values() for _, pres, _ in filas}
+            self._presentaciones[ticker] = sorted(fechas)
+        lista = self._presentaciones[ticker]
+        import bisect
+        i = bisect.bisect_right(lista, corte)
+        return lista[i - 1] if i else None
+
     def fundamentales(self, ticker: str, fecha, precio: float | None) -> Fundamentals | None:
         """`Fundamentals` de `ticker` con lo publicado hasta `fecha`. None si
-        aún no había cuentas anuales suficientes (o dejó de publicarlas)."""
+        aún no había cuentas anuales suficientes (o dejó de publicarlas).
+
+        Entre dos presentaciones a la SEC las cuentas no cambian: se calculan una vez
+        por presentación y se reutilizan (solo cambian el precio y la capitalización)."""
         d = self.datos.get(ticker)
         if not d:
             return None
         corte = fecha.strftime("%Y-%m-%d") if hasattr(fecha, "strftime") else str(fecha)[:10]
+        clave = self._ultima_presentacion(ticker, corte)
+        if clave is None:
+            return None
+        if (ticker, clave) not in self._cache:
+            self._cache[(ticker, clave)] = self._base(ticker, clave)
+        base = self._cache[(ticker, clave)]
+        if base is None:
+            return None
+        f0, fin_ultimo = base
+        if _dias(corte, fin_ultimo) > MAX_EDAD_CUENTAS_DIAS:
+            return None
+        import dataclasses as _dc
+        f = _dc.replace(f0, as_of=date.fromisoformat(corte))
+        if precio and precio > 0:
+            f.price = float(precio)
+            if f.shares_diluted:
+                f.market_cap = f.price * f.shares_diluted[-1]
+        return f
+
+    def _base(self, ticker: str, corte: str) -> tuple[Fundamentals, str] | None:
+        """Las cuentas con lo presentado hasta `corte`, sin precio. (Fundamentals, fin del último ejercicio)."""
+        d = self.datos[ticker]
         conc = d["conceptos"]
         flujos = {k: _serie_en(conc.get(k, {}), CONCEPTS[k], corte) for k in CONCEPTS}
         saldos = {k: _serie_en(conc.get(k, {}), BALANCE_CONCEPTS[k], corte) for k in BALANCE_CONCEPTS}
@@ -209,8 +247,6 @@ class FuentePIT:
             return None
         n = self.anios
         fines = sorted(ingresos)[-n:]
-        if _dias(corte, fines[-1]) > MAX_EDAD_CUENTAS_DIAS:
-            return None
 
         def serie(clave: str) -> list[float]:
             src = flujos.get(clave, {})
@@ -246,9 +282,7 @@ class FuentePIT:
             shares_diluted=serie("shares_diluted"),
             total_debt=deuda or None, cash=caja or None, equity=ultimo("equity"),
             total_assets=ultimo("total_assets"), current_liabilities=ultimo("current_liabilities"),
+            inventory=([saldos["inventory"][e] / M if e in saldos["inventory"] else None for e in fines]
+                       if saldos.get("inventory") else []),
         )
-        if precio and precio > 0:
-            f.price = float(precio)
-            if f.shares_diluted:
-                f.market_cap = f.price * f.shares_diluted[-1]
-        return f
+        return f, fines[-1]

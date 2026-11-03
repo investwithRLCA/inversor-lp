@@ -114,6 +114,9 @@ class Fundamentals:
     equity: float | None = None
     total_assets: float | None = None
     current_liabilities: float | None = None
+    # Inventario al cierre de cada ejercicio, alineado con fiscal_years (None si ese año no se publicó).
+    # Solo lo usa el filtro Lynch; NO entra en las métricas del cribado ni en data_hash.
+    inventory: list[float | None] = field(default_factory=list)
 
     def latest(self, serie: list[float]) -> float | None:
         return serie[-1] if serie else None
@@ -184,6 +187,7 @@ BALANCE_CONCEPTS: dict[str, list[str]] = {
         "DebtCurrent",
     ],
     "operating_lease": ["OperatingLeaseLiabilityNoncurrent"],
+    "inventory": ["InventoryNet", "InventoryGross"],      # para el filtro Lynch (inventario vs ventas)
 }
 
 
@@ -393,6 +397,8 @@ class SecEdgarProvider:
             equity=last("equity"),
             total_assets=last("total_assets"),
             current_liabilities=last("current_liabilities"),
+            inventory=([stocks["inventory"][fy] / M if fy in stocks["inventory"] else None for fy in fys]
+                       if stocks.get("inventory") else []),
         )
         return f
 

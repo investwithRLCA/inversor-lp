@@ -48,9 +48,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: backend/.cache_pit
-          key: pit-v1-${{ github.run_id }}
+          key: pit-v2-${{ github.run_id }}
           restore-keys: |
-            pit-v1-
+            pit-v2-
 
       - name: Probar los paquetes en el histórico
         working-directory: backend
@@ -67,7 +67,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: backend/.cache_pit
-          key: pit-v1-${{ github.run_id }}
+          key: pit-v2-${{ github.run_id }}
 
       - name: Mostrar el informe en la página de la ejecución
         if: always()
