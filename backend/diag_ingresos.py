@@ -19,7 +19,8 @@ from pathlib import Path
 from providers import SecEdgarProvider
 
 PATRON = re.compile(r"(Revenue|Sales|InterestAndDividendIncome|InterestIncome|NoninterestIncome|Premiums|"
-                    r"InterestExpense|BenefitsLossesAndExpenses|OperatingExpenses)", re.I)
+                    r"InterestExpense|LeaseIncome|BenefitsLossesAndExpenses|OperatingExpenses|NetIncomeLoss$)", re.I)
+DETALLE = 25
 
 
 def anuales(nodo: dict) -> list[tuple[str, str, float]]:
@@ -72,7 +73,7 @@ def main() -> None:
             resumen["error_descarga"] += 1
             continue
         sic = str(sub.get("sic", ""))
-        formas = (sub.get("filings", {}).get("recent", {}) or {}).get("form", [])[:400]
+        formas = (sub.get("filings", {}).get("recent", {}) or {}).get("form", [])
         n10k = sum(1 for f in formas if f in ("10-K", "10-K/A"))
         n20f = sum(1 for f in formas if f in ("20-F", "40-F"))
         gaap = facts.get("facts", {}).get("us-gaap", {})
@@ -94,8 +95,10 @@ def main() -> None:
         resumen[clase] += 1
         for c in recientes:
             tipos[c[2]] += 1
-        print(f"{t:6} sic={sic:4} 10K={n10k} 20F/40F={n20f} {clase:16} {sub.get('sicDescription','')[:40]} · {nombre[:40]}")
-        for fin, años, tag, val in cands[:8]:
+        sucesor = [f for f in formas if f.startswith("8-K12")]
+        print(f"{t:6} sic={sic:4} 10K={n10k} 20F/40F={n20f} {clase:16} {sub.get('sicDescription','')[:40]} · {nombre[:40]}"
+              f"{' · SUCESORA (' + ','.join(sorted(set(sucesor))) + ')' if sucesor else ''}")
+        for fin, años, tag, val in cands[:DETALLE]:
             print(f"         {fin} años={años:2} {tag} = {val/1e6:,.0f} M")
     print("\nResumen:", dict(resumen))
     print("Conceptos con datos recientes (nº de empresas):")
