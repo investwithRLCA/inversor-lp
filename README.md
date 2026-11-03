@@ -299,6 +299,32 @@ paquete de 1–3 años **no pasó** los criterios fijados antes de ver los resul
 > (faltan las que quebraron). Se mantienen **en prueba**: el juez es el seguimiento en vivo (12–24 meses de cohortes mensuales) y tu marcador
 > frente al S&P 500. Si no gana, el índice es la respuesta.
 
+### Autocorrección: el sistema se ajusta solo, con reglas fijadas de antemano
+
+El módulo mensual se corrige a sí mismo según se acumulan datos (`backend/mensual/autocorreccion.py`).
+Las reglas se escribieron **antes** de ver resultados y no se tocan a la vista de ellos; cada ajuste
+exige un mínimo de datos y una diferencia clara (intervalo de confianza al 90 % por *bootstrap* de
+bloques de 12 meses, porque las cohortes mensuales a un año se solapan), para no dar bandazos por
+una racha de dos meses:
+
+| Mecanismo | Cuándo actúa | Qué hace | Cuándo se deshace |
+|---|---|---|---|
+| **1 · Revalidación histórica** | Cada mes: `prueba-lynch.yml` se lanza sola entre el 24 y el 28 (antes del informe del día 1), vuelve a bajar de la SEC las cuentas con más de 25 días y guarda su veredicto en `backend/mensual/autocorreccion.json` | Por tamaño: si el filtro en uso deja de batir al índice **y** al grupo a 12 y 24 meses, cambia al mejor de los probados que sí lo haga; si ninguno, la sección queda **en pausa**; si el en uso sigue aprobando, solo cambia si otro le saca ≥ 2 puntos a 24 meses | Al mes siguiente que algún filtro vuelva a aprobar |
+| **2 · Freno por resultados reales** | Con ≥ 12 cohortes del seguimiento con más de un año | Si la sección rinde menos que su índice y todo el intervalo está por debajo de 0 → **en pausa** | Cuando el exceso medio vuelve a ser ≥ 0 |
+| **3 · ¿Hacer caso a la IA?** | Con ≥ 24 cohortes con más de un año | Mide VIGILAR (y «sin IA aún») frente a las COMPRA de la misma sección; si rinden menos con claridad, **dejan de recibir dinero** (salen como «frenadas») | Cuando la diferencia vuelve a ser ≥ 0 |
+
+Los filtros entre los que puede elegir son los de la prueba histórica: en pequeñas, Lynch + calidad o
+Lynch solo; en grandes, calidad, calidad + más baratas, fórmula mágica o Lynch. Los mecanismos 2 y 3
+necesitan años de historia real: hasta entonces la tarjeta **Autocorrección** de *Este mes* dice
+cuánto falta (p. ej. «5 de 12»). Todo cambio queda en el historial de `autocorreccion.json` y en la
+tarjeta. Las pausas y exclusiones se arrastran de un informe al siguiente (bloque `autocorreccion`
+del informe guardado). Solo usa datos públicos de empresas.
+
+**Cambios de veredicto en color.** Si una empresa pasa de VIGILAR a COMPRA (o al revés) en el último
+mes, su tarjeta en *Este mes* y en *Fichas* se rellena de verde (sube) o rojo (baja) con la etiqueta
+«↑ Sube: de VIGILAR a COMPRA · fecha» durante 35 días. Necesita la migración `db/008_cambios_veredicto.sql`
+(añade a la vista el veredicto anterior y la fecha del cambio); sin ella todo funciona igual, sin colores.
+
 ### Privacidad: tu cartera nunca sale de tu móvil
 
 Este repositorio es público, así que el informe, el Issue y los logs contienen **solo datos de
@@ -331,6 +357,8 @@ la regla de los 2 meses y el marcador frente al S&P 500.
 | `backend/mensual/prueba_lynch.py` | Prueba histórica del filtro Lynch (grandes vs S&P 500, pequeñas vs Russell 2000, % de aciertos). |
 | `.github/workflows/prueba-lynch.yml` | Lanza esa prueba a mano (informe en *Summary*). |
 | `db/007_lynch.sql` | Añade la evaluación Lynch a la vista pública del Vigía (aplicar en el SQL Editor de Supabase). |
+| `db/008_cambios_veredicto.sql` | Añade a la vista el veredicto anterior y la fecha del cambio (colores de «sube / baja» en el Vigía). |
+| `backend/mensual/autocorreccion.py` · `autocorreccion.json` | Reglas de autocorrección y último veredicto de la revalidación mensual. |
 | `backend/mensual/mercados.py` | Listas de índices y bolsas para el filtro por mercado del Vigía (`docs/mercados.json`). |
 | `.github/workflows/mercados.yml` | Actualiza esas listas cada lunes. |
 | `.github/workflows/dividendos.yml` | Sección de dividendos suelta (a mano), con opción de depurar empresas concretas. |

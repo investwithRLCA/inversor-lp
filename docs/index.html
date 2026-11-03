@@ -174,6 +174,13 @@
     position: relative;
   }
 
+  /* cambio de veredicto en el último mes (migración 008): verde si sube, naranja si baja */
+  .entrada.cambio-sube, .m-cand.cambio-sube, .m-posicion.cambio-sube { background: rgba(122,155,126,0.13); border-color: rgba(122,155,126,0.7); }
+  .entrada.cambio-baja, .m-cand.cambio-baja, .m-posicion.cambio-baja { background: rgba(214,138,64,0.13); border-color: rgba(214,138,64,0.7); }
+  .cambio { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .cambio.sube { color: var(--sage); background: rgba(122,155,126,0.18); }
+  .cambio.baja { color: #D68A40; background: rgba(214,138,64,0.18); }
+
   .entrada.en-zona {
     border-color: var(--brass-dim);
     box-shadow: 0 0 0 1px rgba(201,162,39,0.25), 0 0 22px -6px rgba(201,162,39,0.55);
@@ -383,6 +390,10 @@
   .m-chip.m-bien { color: var(--sage); border-color: rgba(122,155,126,.4); }
   .m-chip.m-warn { color: var(--brass); border-color: var(--brass-dim); }
   .m-chip.m-mal  { color: #C17364; border-color: rgba(156,74,60,.5); }
+  .m-ac-lista { margin: 4px 0 10px; padding-left: 18px; font-size: 13px; }
+  .m-ac-lista li { margin: 6px 0; line-height: 1.55; }
+  .m-autocorr .m-tabla td small { font-size: 11px; }
+  .m-autocorr .m-tabla td:nth-child(2), .m-autocorr .m-tabla th:nth-child(2) { text-align: left; }
   .m-pos { color: inherit; } span.m-pos, small.m-pos, p.m-pos { color: var(--sage); }
   span.m-neg, small.m-neg, p.m-neg { color: #C17364; }
   .m-acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -511,6 +522,23 @@ function lynchDe(fila) {
   const l = fila && fila.lynch;
   return l && typeof l === "object" ? l : null;
 }
+// ── Cambio de veredicto (migración 008): de un mes a otro, verde si mejora y naranja si empeora.
+const DIAS_CAMBIO = 35;
+function cambioVeredicto(antes, ahora, fechaISO, hoy = new Date()) {
+  if (!antes || !ahora || !fechaISO || antes === ahora) return null;
+  const f = new Date(fechaISO);
+  if (isNaN(f) || (hoy - f) / 86400000 > DIAS_CAMBIO) return null;
+  const oa = ORDEN_VEREDICTO[antes], ob = ORDEN_VEREDICTO[ahora];
+  if (oa === undefined || ob === undefined) return null;
+  return { tipo: ob < oa ? "sube" : "baja", antes, ahora, fecha: fechaISO };
+}
+function etiquetaCambio(c) {
+  if (!c) return "";
+  const n = (v) => String(v).replace("_", " ");
+  return `<span class="cambio ${c.tipo}">${c.tipo === "sube" ? "↑ Sube" : "↓ Baja"}: de ${n(c.antes)} a ${n(c.ahora)} · ${fmtFecha(c.fecha)}</span>`;
+}
+window.VigiaCambio = { cambioVeredicto, etiquetaCambio };      // lo usa también «Este mes» (mensual-ui.js)
+
 const CAT_LYNCH = { rapida: "crecimiento rápido", solida: "sólida («stalwart»)", lenta: "lenta con dividendo" };
 function fmtNum(v, d = 2) {
   return v === null || v === undefined ? "—" : Number(v).toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -646,13 +674,15 @@ function tarjeta(fila) {
   const enZona = !!fila.en_zona_compra;
   const informeMd = quitarVallaMarkdown(fila.report_md);
 
+  const cambio = cambioVeredicto(fila.veredicto_anterior, fila.veredicto_final, fila.veredicto_cambio_el);
   const el = document.createElement("article");
-  el.className = "entrada" + (enZona ? " en-zona" : "");
+  el.className = "entrada" + (enZona ? " en-zona" : "") + (cambio ? " cambio-" + cambio.tipo : "");
   el.innerHTML = `
     <div class="cabecera-entrada">
       <div class="id-empresa">
         <div class="ticker">${fila.ticker}<span class="pill v-${fila.veredicto_final}">${fila.veredicto_final.replace('_',' ')}</span></div>
         <div class="nombre">${fila.name || ''}</div>
+        ${etiquetaCambio(cambio)}
         ${etiquetasMercado(fila.ticker)}
         ${lineaLynch(fila)}
       </div>
@@ -776,8 +806,8 @@ async function cargar() {
 cargar();
 cargarMercados();
 </script>
-<script src="mensual.js?v=7"></script>
-<script src="mensual-ui.js?v=7"></script>
+<script src="mensual.js?v=8"></script>
+<script src="mensual-ui.js?v=8"></script>
 
 </body>
 </html>

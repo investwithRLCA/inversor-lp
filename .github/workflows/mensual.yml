@@ -112,9 +112,9 @@ jobs:
             const paq = inf.paquetes || {};
             const nDiv = inf.dividendos && inf.dividendos.candidatas ? inf.dividendos.candidatas.length : null;
             let titulo;
-            if (paq.medio || paq.largo || paq.lynch_g || paq.lynch_p) {
+            if (paq.medio || paq.largo || paq.lynch_g || paq.lynch_p || paq.calidad_g || nDiv != null) {
               const etiquetas = [['corto', '1–3 años'], ['medio', '3–5 años'], ['largo', '5+ años'],
-                                 ['lynch_g', 'Lynch grandes'], ['lynch_p', 'Lynch pequeñas']];
+                                 ['lynch_p', 'pequeñas'], ['calidad_g', 'grandes'], ['lynch_g', 'grandes (Lynch)']];
               const partes = etiquetas.filter(([k]) => paq[k]).map(([k, e]) => `${e} ${paq[k].candidatas.length}`);
               if (nDiv != null) partes.push(`dividendos ${nDiv}`);
               titulo = `📅 ${inf.mes}: ${partes.join(' · ')}`;

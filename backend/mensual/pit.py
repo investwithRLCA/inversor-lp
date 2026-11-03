@@ -171,11 +171,18 @@ class FuentePIT:
 
     @classmethod
     def descargar(cls, tickers: list[str], carpeta: Path, hilos: int = 3,
-                  throttle: float = 0.35, anios: int = 5) -> "FuentePIT":
-        """Baja de la SEC lo que falte en `carpeta` (las ya bajadas no se repiten)."""
+                  throttle: float = 0.35, anios: int = 5, max_edad_dias: int | None = None) -> "FuentePIT":
+        """Baja de la SEC lo que falte en `carpeta` (las ya bajadas no se repiten, salvo que
+        tengan más de `max_edad_dias`: así una prueba que se repite cada mes ve las cuentas nuevas)."""
         carpeta = Path(carpeta)
         carpeta.mkdir(parents=True, exist_ok=True)
-        pendientes = [t for t in tickers if not cls._ruta(carpeta, t).exists()]
+
+        def falta(t: str) -> bool:
+            f = cls._ruta(carpeta, t)
+            if not f.exists():
+                return True
+            return bool(max_edad_dias) and (time.time() - f.stat().st_mtime) > max_edad_dias * 86400
+        pendientes = [t for t in tickers if falta(t)]
         print(f"SEC: {len(tickers) - len(pendientes)} empresas ya en caché, {len(pendientes)} por descargar.")
         fallos: dict[str, str] = {}
         hecho = [0]

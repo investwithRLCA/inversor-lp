@@ -8,12 +8,22 @@ name: Prueba histórica de los filtros (Lynch, calidad, fórmula mágica)
 # (frente al S&P 500) y pequeñas (frente al Russell 2000). Mide rentabilidad a
 # 12, 24 y 36 meses, % de aciertos y ganancia/pérdida de las que aciertan y fallan.
 #
-# Lanzarlo a mano: pestaña "Actions" → "Prueba histórica del filtro Lynch" → "Run workflow".
+# AUTOCORRECCIÓN: se repite sola cada mes (entre el 24 y el 28, antes del informe
+# del día 1) con las cuentas y los precios al día, y guarda su veredicto en
+# backend/mensual/autocorreccion.json. El informe mensual lo lee: si el filtro en
+# uso deja de batir al índice cambia a otro que sí lo haga, y si ninguno lo hace
+# pone esa sección en pausa (reglas en backend/mensual/autocorreccion.py).
+#
+# Lanzarlo a mano: pestaña "Actions" → "Prueba histórica de los filtros" → "Run workflow".
 # El resultado aparece en la página de la ejecución (resumen). La primera vez tarda
 # ~1 hora (descarga las cuentas de ~2.900 empresas); después usa la caché.
 # Solo usa datos públicos de empresas: nada de tu cartera.
 
 on:
+  schedule:
+    # GitHub a veces se salta ejecuciones programadas: se intenta cinco días y,
+    # en cuanto una sale bien, las demás de ese mes no hacen nada.
+    - cron: "37 4 24-28 * *"
   workflow_dispatch:
     inputs:
       max_empresas:
@@ -26,12 +36,47 @@ on:
         type: string
         required: false
         default: "2015-01-01"
+      autocorregir:
+        description: "Actualizar la autocorrección con el resultado (solo con todas las empresas)"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: prueba-lynch
+  cancel-in-progress: false
 
 jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      si: ${{ steps.toca.outputs.si }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ¿Hace falta este mes?
+        id: toca
+        run: |
+          # En las ejecuciones programadas: si la autocorrección ya se actualizó hace
+          # menos de 20 días, no se repite. A mano se ejecuta siempre.
+          if [ "${{ github.event_name }}" != "schedule" ]; then echo "si=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, datetime as d
+          try:
+              f = json.load(open("backend/mensual/autocorreccion.json"))["actualizado"]
+              dias = (d.date.today() - d.date.fromisoformat(f)).days
+          except Exception:
+              dias = 999
+          print("si=" + ("true" if dias >= 20 else "false"))
+          PY
+
   probar:
+    needs: comprobar
+    if: needs.comprobar.outputs.si == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -53,15 +98,22 @@ jobs:
           restore-keys: |
             pit-v2-
 
-      - name: Probar el filtro Lynch en el histórico
+      - name: Probar los filtros en el histórico
         working-directory: backend
         env:
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           MAX_EMPRESAS: ${{ github.event.inputs.max_empresas || '0' }}
           INICIO: ${{ github.event.inputs.inicio || '2015-01-01' }}
+          AUTOCORREGIR: ${{ github.event.inputs.autocorregir || 'true' }}
         run: |
           N="${MAX_EMPRESAS//[^0-9]/}"
-          python -W ignore -m mensual.prueba_lynch --max-empresas "${N:-0}" --inicio "$INICIO" --salida resultados_lynch
+          EXTRA=""
+          # La autocorrección solo con todas las empresas y desde 2015 (la prueba de referencia).
+          if [ "$AUTOCORREGIR" = "true" ] && [ "${N:-0}" = "0" ] && [ "$INICIO" = "2015-01-01" ]; then
+            # cuentas de la SEC con más de 25 días se vuelven a bajar: así entra lo presentado este mes
+            EXTRA="--autocorreccion mensual/autocorreccion.json --refrescar-dias 25"
+          fi
+          python -W ignore -m mensual.prueba_lynch --max-empresas "${N:-0}" --inicio "$INICIO" --salida resultados_lynch $EXTRA
 
       - name: Guardar las cuentas descargadas para la próxima vez
         if: always()
@@ -86,3 +138,20 @@ jobs:
           name: prueba-lynch
           path: backend/resultados_lynch/
           if-no-files-found: ignore
+
+      - name: Guardar la autocorrección en el repositorio (solo si ha cambiado)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -f backend/mensual/autocorreccion.json ] || { echo "Sin autocorrección en esta ejecución."; exit 0; }
+          git add backend/mensual/autocorreccion.json
+          if git diff --cached --quiet; then
+            echo "Sin cambios."
+            exit 0
+          fi
+          git commit -m "Autocorrección: revalidación histórica del mes"
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
+            sleep 5
+          done
+          exit 1

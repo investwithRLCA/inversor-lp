@@ -60,6 +60,7 @@ import pandas as pd
 from . import paquetes as pq
 from lynch import con_precio as lynch_con_precio
 from . import seguimiento as sg
+from . import autocorreccion as ac
 from .estrategia import Params, decidir_ventas, elegir_candidatas, senales
 from .paquetes import ReglasPaquetes
 
@@ -181,6 +182,9 @@ def generar_informe(
     reglas: ReglasPaquetes | None = None,
     previos: list[dict] | None = None,   # filas de mensual_informes, para el seguimiento
     activos: tuple[str, ...] | None = None,   # paquetes que se ofrecen (por defecto, los de `paquetes.ACTIVOS`)
+    validacion: dict | None = None,           # revalidación histórica (autocorreccion.json)
+    autocorr_previo: dict | None = None,      # bloque «autocorreccion» del informe anterior
+    autocorregir: bool = True,
 ) -> dict:
     """Construye el informe mensual con sus tres paquetes.
 
@@ -202,6 +206,21 @@ def generar_informe(
     if (pd.Timestamp(hoy) - fecha_datos).days > DIAS_PRECIO_VIEJO:
         avisos.append(f"Los precios más recientes son del {fecha_datos:%d/%m/%Y}: "
                       "mercado cerrado varios días o Yahoo con retraso.")
+
+    # --- autocorrección: revalidación histórica, freno por resultados reales y peso de la IA --- #
+    seg_previo = None
+    if previos:
+        try:
+            seg_previo = sg.calcular(previos, precios, fecha_datos)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Seguimiento no disponible")
+            avisos.append(f"No se pudo calcular el seguimiento de informes anteriores: {e}")
+    bloque_ac = None
+    excluir_v: tuple[str, ...] = ()
+    if autocorregir:
+        activos, reglas, excluir_v, bloque_ac = ac.decidir(activos, reglas, seg_previo, validacion,
+                                                           autocorr_previo, f"{hoy:%Y-%m-%d}")
+        avisos.extend(bloque_ac["notas"])
 
     sen = senales(acciones, fecha_datos, p)
     mom = _momento(acciones)
@@ -246,6 +265,7 @@ def generar_informe(
             "nota": _num(f.get("nota_fundamental"), 1), "confianza_tesis": f.get("confianza"),
             "tesis_dias": _dias_desde(f.get("analizado_el"), hoy),
             "quant": _num(f.get("quant_score"), 1),
+            "v_ant": f.get("veredicto_anterior"), "v_cambio": f.get("veredicto_cambio_el"),
         }
 
     def recorrer(paquete, orden, n_max, evals=None, post=None, max_sector=None):
@@ -353,6 +373,10 @@ def generar_informe(
 
     # ===================== paquetes PETER LYNCH (grandes y pequeñas) ============= #
     def post_lynch(reg, c):
+        if reg["veredicto"] in excluir_v:
+            return ("la autocorrección deja fuera del reparto las "
+                    + ("VIGILAR" if reg["veredicto"] == "VIGILAR" else "«sin IA aún»")
+                    + ": en la realidad han rendido menos que las COMPRA")
         if reg["veredicto"] in RECHAZADAS:
             return f"la IA la descartó en su análisis ({reg['veredicto'].replace('_', ' ')})"
         reg["salud"] = f_salud(reg["ticker"]) if f_salud else None
@@ -472,6 +496,8 @@ def generar_informe(
              "pe": _num(fila.get("precio_entrada"), 2), "vmin": _num(fila.get("valor_min"), 2),
              "vmax": _num(fila.get("valor_max"), 2), "sec": fila.get("sector") or "",
              "td": _dias_desde(fila.get("analizado_el"), hoy)}
+        if fila.get("veredicto_cambio_el") and fila.get("veredicto_anterior"):
+            e["va"], e["vc"] = fila["veredicto_anterior"], str(fila["veredicto_cambio_el"])[:10]
         if fila.get("pasa_cribado") is False:
             e["qp"] = False                      # ya no pasa el cribado cuantitativo
         if fila.get("lynch"):
@@ -542,12 +568,10 @@ def generar_informe(
         "spy": {"f": [d.strftime("%Y-%m-%d") for d in spy.index], "c": [round(float(x), 2) for x in spy]},
         "avisos": avisos,
     }
-    if previos:
-        try:
-            informe["seguimiento"] = sg.calcular(previos, precios, fecha_datos)
-        except Exception as e:  # noqa: BLE001
-            log.exception("Seguimiento no disponible")
-            informe["avisos"].append(f"No se pudo calcular el seguimiento de informes anteriores: {e}")
+    if seg_previo is not None:
+        informe["seguimiento"] = seg_previo
+    if bloque_ac is not None:
+        informe["autocorreccion"] = bloque_ac
     return informe
 
 
@@ -806,6 +830,7 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
 # E/S: Supabase y Yahoo
 # --------------------------------------------------------------------------- #
 
+COLUMNAS_CAMBIO = ",veredicto_anterior,veredicto_cambio_el"      # migración 008
 COLUMNAS_TESIS = ("ticker,name,sector,veredicto_final,precio_entrada,valor_min,valor_max,"
                   "nota_fundamental,confianza,analizado_el")
 
@@ -823,8 +848,14 @@ def _paginas(consulta, tam: int = 1000):
 
 
 def cargar_tesis(repo) -> list[dict]:
-    """Empresas con análisis de IA (vista pública `v_tesis_completa`)."""
-    return list(_paginas(lambda a, b: repo.db.table("v_tesis_completa").select(COLUMNAS_TESIS).range(a, b).execute()))
+    """Empresas con análisis de IA (vista pública `v_tesis_completa`). Con la migración 008,
+    también el veredicto anterior y cuándo cambió; sin ella, sigue sin esos campos."""
+    try:
+        return list(_paginas(lambda a, b: repo.db.table("v_tesis_completa")
+                             .select(COLUMNAS_TESIS + COLUMNAS_CAMBIO).range(a, b).execute()))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Sin veredicto anterior (¿migración 008 sin aplicar?): %s", e)
+        return list(_paginas(lambda a, b: repo.db.table("v_tesis_completa").select(COLUMNAS_TESIS).range(a, b).execute()))
 
 
 def cargar_universo(repo) -> list[dict]:
@@ -902,7 +933,7 @@ def cargar_universo(repo) -> list[dict]:
     for t, f in tesis.items():
         if t in filas:
             for k in ("veredicto_final", "precio_entrada", "valor_min", "valor_max",
-                      "nota_fundamental", "confianza", "analizado_el"):
+                      "nota_fundamental", "confianza", "analizado_el", "veredicto_anterior", "veredicto_cambio_el"):
                 filas[t][k] = f.get(k)
             filas[t]["sector"] = filas[t]["sector"] or f.get("sector") or ""
         else:
@@ -996,6 +1027,8 @@ def main() -> None:
         f_ia=explicar_caida if hay_ia else None,
         f_tesis_texto=lambda t: texto_tesis(repo, t),
         previos=previos,
+        validacion=ac.leer(),
+        autocorr_previo=((previos[-1].get("informe") or {}).get("autocorreccion") if previos else None),
     )
 
     if not args.sin_dividendos:

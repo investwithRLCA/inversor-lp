@@ -65,7 +65,7 @@ def _picks(inf: dict) -> dict[str, list[dict]]:
     (solo `candidatas`, que era el paquete corto)."""
     paq = inf.get("paquetes")
     if isinstance(paq, dict) and paq:
-        out = {k: [{"ticker": c["ticker"], "tier": c.get("tier")} for c in (v.get("candidatas") or [])]
+        out = {k: [{"ticker": c["ticker"], "tier": c.get("tier"), "v": c.get("veredicto")} for c in (v.get("candidatas") or [])]
                for k, v in paq.items() if k in PAQUETES}
     else:
         out = {"corto": [{"ticker": c["ticker"], "tier": c.get("tier")} for c in (inf.get("candidatas") or [])]}
@@ -163,7 +163,7 @@ def calcular(filas: list[dict], precios: pd.DataFrame, hasta: pd.Timestamp) -> d
                 if r is None:
                     sin_precio.append(c["ticker"])
                 else:
-                    filas_pick.append([c["ticker"], round(r, 4), c.get("tier")])
+                    filas_pick.append([c["ticker"], round(r, 4), c.get("tier"), c.get("v")])
             rent = _media([x[1] for x in filas_pick])
             cohortes.append({
                 "mes": inf.get("mes") or f.get("mes"),

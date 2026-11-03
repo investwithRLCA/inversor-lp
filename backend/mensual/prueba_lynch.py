@@ -463,7 +463,10 @@ def decisiones_json(res: Resultado) -> dict:
     for v in VARIANTES:
         for g in GRUPOS:
             d = decidir(res, v, g)
-            out[f"{v}:{g}"] = {"veredicto": d["veredicto"], "motivos": d["motivos"]}
+            s12, s24 = (d["stats"] or {}).get(12) or {}, (d["stats"] or {}).get(24) or {}
+            out[f"{v}:{g}"] = {"veredicto": d["veredicto"], "motivos": d["motivos"],
+                               "ex12": None if s12.get("insuficiente") else s12.get("ex_bench"),
+                               "ex24": None if s24.get("insuficiente") else s24.get("ex_bench")}
     out["eleccion"] = {g: e["variante"] for g, e in elegir(res).items()}
     return out
 
@@ -514,6 +517,8 @@ def main() -> None:
     ap.add_argument("--desde-precios", default="2008-01-01")
     ap.add_argument("--inicio", default="2015-01-01")
     ap.add_argument("--max-empresas", type=int, default=0)
+    ap.add_argument("--autocorreccion", default="", help="ruta de autocorreccion.json a actualizar con el veredicto")
+    ap.add_argument("--refrescar-dias", type=int, default=0, help="volver a bajar de la SEC las cuentas con más de N días")
     args = ap.parse_args()
 
     from .dividendos import descargar_dividendos
@@ -524,7 +529,7 @@ def main() -> None:
     print(f"Universo: {len(tickers)} empresas (S&P 500, 400, 600, Russell 2000 y Nasdaq-100 de hoy).")
     sectores = sectores_gics()
     print(f"Sectores conocidos: {sum(1 for t in tickers if sectores.get(t))}/{len(tickers)}")
-    pit = FuentePIT.descargar(tickers, Path(args.cache))
+    pit = FuentePIT.descargar(tickers, Path(args.cache), max_edad_dias=args.refrescar_dias or None)
     print(f"Cuentas de la SEC utilizables: {len(pit.datos)}/{len(tickers)}")
     if len(pit.datos) < 0.6 * len(tickers):
         raise RuntimeError("La SEC ha devuelto cuentas de menos del 60 % de las empresas: resultado poco fiable.")
@@ -557,7 +562,15 @@ def main() -> None:
     res.picks.to_csv(out / "elegidas.csv", index=False)
     res.aptas.to_csv(out / "aptas.csv.gz", index=False, compression="gzip")
     res.ref.to_csv(out / "referencias.csv", index=False)
-    (out / "decisiones.json").write_text(json.dumps(decisiones_json(res), ensure_ascii=False, indent=2), encoding="utf-8")
+    dec = decisiones_json(res)
+    (out / "decisiones.json").write_text(json.dumps(dec, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.autocorreccion and args.max_empresas == 0:
+        from datetime import date as _date
+        from . import autocorreccion as ac
+        ruta = Path(args.autocorreccion)
+        nuevo = ac.actualizar_validacion(ac.leer(ruta), ac.veredictos_de_prueba(dec), _date.today().isoformat())
+        ruta.write_text(json.dumps(nuevo, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("Autocorrección:", json.dumps(nuevo["grupos"], ensure_ascii=False))
     print("\n" + md)
 
 

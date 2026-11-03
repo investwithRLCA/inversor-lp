@@ -82,7 +82,17 @@
   const CON_IWM = ["dividendos", "lynch_p"];      // se comparan con el Russell 2000
   const TIPO_LYNCH = { rapida: "crecimiento rápido", solida: "sólida", lenta: "lenta con dividendo" };
   const PAQS_RETIRADOS = ["corto", "medio", "largo", "lynch_g"];
-  const nombrePaq = (k) => (PAQS_RETIRADOS.includes(k) ? NOMBRE_PAQ[k] + " (retirado)" : NOMBRE_PAQ[k] || k);
+  // La autocorrección puede reactivar un paquete retirado (p. ej. Lynch en grandes) si la revalidación mensual lo aprueba.
+  const acActivos = () => ((informe && informe.autocorreccion && informe.autocorreccion.activos) || []);
+  const retirado = (k) => PAQS_RETIRADOS.includes(k) && !acActivos().includes(k);
+  const ordenPaqs = () => [...PAQS_ORDEN.slice(0, -1), ...acActivos().filter((k) => !PAQS_ORDEN.includes(k)), PAQS_ORDEN[PAQS_ORDEN.length - 1]];
+  const nombrePaq = (k) => (retirado(k) ? NOMBRE_PAQ[k] + " (retirado)" : NOMBRE_PAQ[k] || k);
+  const GRUPO_PAQ = { lynch_p: "pequenas", calidad_g: "grandes", lynch_g: "grandes" };
+  const NOMBRE_GRUPO = { pequenas: "Pequeñas", grandes: "Grandes" };
+  const INDICE_GRUPO = { pequenas: "Russell 2000", grandes: "S&P 500" };
+  const NOMBRE_VARIANTE = { lynch_cribado: "Lynch + calidad", lynch: "Lynch (sin cribado de calidad)", calidad: "las de mejor nota de calidad",
+                            calidad_precio: "calidad + más baratas", magica: "fórmula mágica de Greenblatt" };
+  const VARIANTE_INICIAL = { pequenas: "lynch_cribado", grandes: "calidad" };
 
   /** Los paquetes del informe; si es un informe antiguo (solo candidatas), un paquete corto. */
   function paquetesDe(inf) {
@@ -120,6 +130,10 @@
     return p.join(" · ");
   }
 
+  /** Cambio de veredicto en el último mes (verde si sube, naranja si baja); helpers de index.html. */
+  const cambioDe = (antes, ahora, fechaISO) => (window.VigiaCambio ? window.VigiaCambio.cambioVeredicto(antes, ahora, fechaISO) : null);
+  const etiquetaCambio = (cv) => (window.VigiaCambio && cv ? window.VigiaCambio.etiquetaCambio(cv) : "");
+
   function tarjetaCandidata(c, paquete, reparto, valorPos, totalTras, hayImporte) {
     const comp = reparto.compras[c.ticker] || 0;
     const dosMeses = M.avisosDosMeses(c.ticker, ops, M.hoyISO());
@@ -140,12 +154,13 @@
       : esLynch ? (ly.cap != null ? `cap. ${num(ly.cap, 0)} M$` : "")
       : paquete === "calidad_g" ? (gr.cap != null ? `cap. ${num(gr.cap, 0)} M$` : "")
       : (c.descuento != null ? `${signo(-c.descuento * 100, 0)} % vs su mediana 5a` : "");
-    return `<article class="m-cand ${abierta ? "abierta" : ""}" data-t="${esc(c.ticker)}">
+    const cv = cambioDe(c.v_ant, c.veredicto, c.v_cambio);
+    return `<article class="m-cand ${abierta ? "abierta" : ""} ${cv ? "cambio-" + cv.tipo : ""}" data-t="${esc(c.ticker)}">
       <div class="m-cab">
         <div><div class="m-tk">${esc(c.ticker)} ${c.doble_descuento ? '<span title="Por debajo del precio de entrada de la tesis">⭐</span>' : ""}
             ${esDiv ? chip(num(dv.rentab_div, 1) + " % dividendo", "m-bien")
               : esLynch && !tieneTesis(c) ? `<span class="m-chip" title="Solo ha pasado el filtro Lynch (los números); aún sin análisis de IA">sin IA aún</span>` : pillNivel(c)}</div>
-            <div class="m-nombre">${esc(c.nombre)}${c.sector ? " · " + esc(c.sector) : ""}</div></div>
+            <div class="m-nombre">${esc(c.nombre)}${c.sector ? " · " + esc(c.sector) : ""}</div>${etiquetaCambio(cv)}</div>
         <div class="m-precio num">${num(c.precio)}<small>${esCalidad && c.puntos != null ? "puntos " + num(c.puntos, 0) + " · " : ""}${esc(subPrecio)}</small></div>
       </div>
       <div class="m-compra">${hayImporte
@@ -213,7 +228,7 @@
   function seccionPaquetes() {
     const inf = informe;
     const paqs = paquetesDe(inf);
-    let claves = PAQS_ORDEN.filter((k) => paqs[k]);
+    let claves = ordenPaqs().filter((k) => paqs[k]);
     if (!claves.length) claves = Object.keys(paqs);     // informe muy antiguo: solo trae un paquete retirado
     if (!claves.includes(cfg.paquete)) cfg.paquete = claves[0];
     const sel = cfg.paquete, P = paqs[sel];
@@ -237,14 +252,21 @@
             ${P.descripcion ? `<p class="m-dim">${esc(P.descripcion)}</p>` : ""}
             ${(P.criterios || []).length ? `<details class="m-det"><summary>Criterios exactos</summary><ul>${P.criterios.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
           </div>`;
-    if (PAQS_RETIRADOS.includes(sel)) {
+    const ac = inf.autocorreccion || null;
+    const grupoSel = GRUPO_PAQ[sel], valSel = ac && grupoSel && ((ac.validacion || {}).grupos || {})[grupoSel];
+    if (retirado(sel)) {
       h += `<div class="m-aviso"><strong>Paquete retirado:</strong> no superó la prueba histórica. Sale porque este informe es anterior al cambio: lanza el «Recomendador mensual» (GitHub → Actions) para tener el informe nuevo. No compres por él.</div>`;
     } else if (sel === "dividendos") {
       h += `<div class="m-aviso">Esta sección <strong>no se ha podido probar en el pasado</strong> (faltan las empresas que quebraron o salieron del índice, y las cifras históricas de abajo son de supervivientes). Mira «Seguimiento» más abajo antes de poner dinero serio. Ojo fiscal: los dividendos tributan cada año como ahorro (en EE. UU. retienen un 15 % que normalmente puedes descontar), la revalorización solo al vender.</div>`;
+    } else if (valSel && valSel.variante && valSel.variante !== VARIANTE_INICIAL[grupoSel]) {
+      h += `<div class="m-aviso">La <strong>autocorrección</strong> ha cambiado el filtro de esta sección a <strong>${esc(NOMBRE_VARIANTE[valSel.variante] || valSel.variante)}</strong>: con los datos al día es el que mejor bate al ${esc(INDICE_GRUPO[grupoSel])} en la prueba histórica (${signo((valSel.ex12 ?? NaN) * 100, 1)} puntos a 1 año, ${signo((valSel.ex24 ?? NaN) * 100, 1)} a 2 años). Faltan las empresas que quebraron: el juez es «Seguimiento», más abajo.</div>`;
     } else if (sel === "calidad_g") {
       h += `<div class="m-aviso">Este paquete <strong>sí se ha probado en el pasado</strong> (cuentas tal como se conocían en cada fecha, 2015-2025, ~670 empresas grandes de hoy): las 15 de mejor nota de calidad rindieron <strong>+2,4 puntos más que el S&amp;P 500</strong> a 1 año, +6,3 a 2 años y +5,7 a 3 años, y más que las grandes elegidas sin criterio. Acertó el 48 % de las compras a 1 año (sin criterio, 44 %), pero las que aciertan ganan más de lo que pierden las que fallan. Ventaja modesta: en 2015-2019 quedó empatado con el índice. Faltan las que quebraron: el juez es «Seguimiento», más abajo.</div>`;
     } else if (sel === "lynch_p") {
       h += `<div class="m-aviso">Este paquete <strong>sí se ha probado en el pasado</strong> (cuentas tal como se conocían en cada fecha, 2015-2025, ~1.100 empresas pequeñas de hoy): rindió <strong>+5,9 puntos al año más que el Russell 2000</strong> a 1 año y +14,9 a 2 años, y algo más que elegir sin criterio entre las mismas pequeñas (+1,7 a 1 año, dentro del margen de error; +5,3 a 2 años). Acertó (batió al Russell 2000) el 54 % de las compras a 1 año y el 60 % a 3 años, frente a un 47-48 % sin criterio. Faltan las empresas que quebraron, así que la realidad será algo peor: el juez es «Seguimiento», más abajo.</div>`;
+    }
+    if (valSel && valSel.activo && valSel.ex24 != null && ac.validacion.actualizado) {
+      h += `<p class="m-nota">Revalidado el ${esc(fecha(ac.validacion.actualizado))} con las cuentas y precios al día: ${signo(valSel.ex12 * 100, 1)} puntos a 1 año y ${signo(valSel.ex24 * 100, 1)} a 2 años frente al ${esc(INDICE_GRUPO[grupoSel])}. Se repite cada mes (ver «Autocorrección»).</p>`;
     }
     h += `<label class="m-campo">¿Cuánto vas a invertir ahora en este paquete? ($)
             <input id="m-importe" type="text" inputmode="decimal" placeholder="p. ej. 500" value="${esc(cfg.importe)}" autocomplete="off"></label>`;
@@ -277,7 +299,7 @@
     let h = `<h2>¿Funcionan los paquetes? <span class="m-sub">seguimiento automático</span></h2>
       <p class="m-dim">Cada mes la herramienta apunta qué habría elegido cada paquete y, con los meses, mide cuánto habría rendido frente al S&amp;P 500 (la sección de dividendos, frente al Russell 2000) y frente al resto del universo (todas las empresas elegibles a partes iguales). Es información pública de empresas: no usa tu cartera.</p>`;
     // informes guardados antes de retirar paquetes pueden traer cohortes de los retirados: no se enseñan
-    const cohortes = ((seg && seg.cohortes) || []).filter((c) => PAQS_ORDEN.includes(c.paquete));
+    const cohortes = ((seg && seg.cohortes) || []).filter((c) => ordenPaqs().includes(c.paquete));
     if (!seg || !cohortes.length) {
       h += `<p class="m-vacio">Aún no hay historial: la primera cifra aparece cuando haya un informe anterior con al menos unos días de recorrido, y es fiable de verdad a partir de 12-24 meses.</p>`;
       return `<section class="m-card">${h}</section>`;
@@ -291,12 +313,12 @@
         <td class="num"><span class="${cl}">${signo(s.exceso_medio * 100, 1)} pp</span></td>
         <td class="num">${s.superan_spy}/${s.cohortes_maduras}</td></tr>`;
     };
-    h += `<table class="m-tabla"><tr><th></th><th>Cohortes ≥3 m</th><th>Exceso vs referencia</th><th>Superan</th></tr>${PAQS_ORDEN.map(fila).join("")}</table>`;
-    const conPool = PAQS_ORDEN.filter((k) => seg.resumen && seg.resumen[k] && seg.resumen[k].exceso_medio_pool != null);
+    h += `<table class="m-tabla"><tr><th></th><th>Cohortes ≥3 m</th><th>Exceso vs referencia</th><th>Superan</th></tr>${ordenPaqs().map(fila).join("")}</table>`;
+    const conPool = ordenPaqs().filter((k) => seg.resumen && seg.resumen[k] && seg.resumen[k].exceso_medio_pool != null);
     if (conPool.length) {
       h += `<p class="m-dim">Frente al resto del universo: ${conPool.map((k) => `${nombrePaq(k)} ${signo(seg.resumen[k].exceso_medio_pool * 100, 1)} pp`).join(" · ")}. Si los paquetes baten al S&amp;P pero no al resto del universo, lo que funciona es el filtro de calidad, no la selección.</p>`;
     }
-    const ta = PAQS_ORDEN.map((k) => (seg.resumen || {})[k]).filter((s) => s && s.tier_a && s.tier_b);
+    const ta = ordenPaqs().map((k) => (seg.resumen || {})[k]).filter((s) => s && s.tier_a && s.tier_b);
     if (ta.length) {
       const media = (t) => { let n = 0, sx = 0; ta.forEach((s) => { n += s[t].n; sx += s[t].rent_media * s[t].n; }); return n ? sx / n : null; };
       h += `<p class="m-dim">Rentabilidad media por empresa elegida: con análisis de IA ${signo(media("tier_a") * 100, 1)} % · solo con cribado ${signo(media("tier_b") * 100, 1)} % (así se verá con el tiempo si la IA aporta algo).</p>`;
@@ -308,6 +330,66 @@
         <td class="num">${c.dias}</td><td class="num">${c.rent != null ? signo(c.rent * 100, 1) + " %" : "—"}</td><td class="num">${c.spy != null ? signo(c.spy * 100, 1) + " % <span class=\"m-dim\">" + (c.ref === "IWM" ? "R2000" : "S&amp;P") + "</span>" : "—"}</td></tr>`).join("")}</table></details>`;
     h += `<div class="m-aviso">${esc(seg.aviso || "")}</div>`;
     return `<section class="m-card">${h}</section>`;
+  }
+
+  function seccionAutocorreccion() {
+    const ac = informe && informe.autocorreccion;
+    let h = `<h2>Autocorrección <span class="m-sub">se ajusta sola, con reglas fijadas de antemano</span></h2>
+      <p class="m-dim">Según se acumulan datos, el sistema corrige su método solo. Para no dar bandazos por una racha de dos meses, cada ajuste exige un mínimo de datos y una diferencia clara (intervalo de confianza al 90 %). Las reglas están escritas en <code>backend/mensual/autocorreccion.py</code> y no se tocan a la vista de los resultados.</p>`;
+    if (!ac) {
+      h += `<p class="m-vacio">Se activa con el próximo informe mensual.</p>`;
+      return `<section class="m-card m-autocorr">${h}</section>`;
+    }
+    const val = ac.validacion || {}, grupos = val.grupos || {};
+    const pp = (x) => (x == null ? "—" : signo(x * 100, 1) + " pp");
+    // 1) revalidación histórica
+    h += `<h3>1 · Revalidación histórica <span class="m-sub">cada mes</span></h3>
+      <p class="m-dim">La prueba del pasado se repite cada mes con las cuentas y los precios al día. Si el filtro en uso deja de batir al índice, se cambia a otro de los probados que sí lo haga; si ninguno lo hace, esa sección se pone en pausa. Si otro le saca al menos ${num(ac.reglas && ac.reglas.margen_cambio_pp, 0)} puntos a 2 años, se cambia a ese.</p>`;
+    const gs = Object.keys(NOMBRE_GRUPO).filter((g) => grupos[g]);
+    if (gs.length) {
+      h += `<table class="m-tabla"><tr><th></th><th>Filtro en uso</th><th>1 año</th><th>2 años</th></tr>${gs.map((g) => {
+        const x = grupos[g];
+        const estado = x.activo ? `<span class="m-chip m-bien">en marcha</span>` : `<span class="m-chip m-mal">en pausa</span>`;
+        return `<tr><td>${esc(NOMBRE_GRUPO[g])}<br><small class="m-dim">vs ${esc(INDICE_GRUPO[g])}</small></td>
+          <td>${esc(NOMBRE_VARIANTE[x.variante] || x.variante || "—")} ${estado}${x.motivo && x.motivo !== "sigue aprobando" ? `<br><small class="m-dim">${esc(x.motivo)}</small>` : ""}</td>
+          <td class="num"><span class="${(x.ex12 ?? 0) >= 0 ? "m-pos" : "m-neg"}">${pp(x.ex12)}</span></td>
+          <td class="num"><span class="${(x.ex24 ?? 0) >= 0 ? "m-pos" : "m-neg"}">${pp(x.ex24)}</span></td></tr>`;
+      }).join("")}</table>
+      <p class="m-nota">Última revalidación: ${esc(fecha(val.actualizado))}. Puntos por encima (o por debajo) del índice en la prueba histórica.</p>`;
+    } else {
+      h += `<p class="m-vacio">Aún no hay revalidación guardada: la primera llega con la próxima «Prueba histórica de los filtros» (se lanza sola entre el 24 y el 28 de cada mes).</p>`;
+    }
+    const hist = (val.historial || []).slice().reverse();
+    if (hist.length) {
+      h += `<details class="m-det"><summary>Cambios hechos por la autocorrección (${hist.length})</summary><ul>${hist.map((c) =>
+        `<li>${esc(fecha(c.fecha))} · ${esc(NOMBRE_GRUPO[c.grupo] || c.grupo)}: ${c.activo ? `de «${esc(NOMBRE_VARIANTE[c.de] || c.de || "—")}» a «${esc(NOMBRE_VARIANTE[c.a] || c.a)}»` : "en pausa"} — ${esc(c.motivo)}</li>`).join("")}</ul></details>`;
+    }
+    // 2) freno por resultados reales
+    const frenos = ac.frenos || {};
+    const ks = ordenPaqs().filter((k) => frenos[k] && (acActivos().includes(k) || frenos[k].pausa));
+    h += `<h3>2 · Freno por resultados reales</h3>
+      <p class="m-dim">Si lo que elige una sección rinde menos que su índice de forma clara, con al menos ${frenos[ks[0]] ? frenos[ks[0]].necesarias : 12} meses de elecciones con más de un año de recorrido, la sección se pone en pausa hasta que vuelva a ir por delante.</p>`;
+    h += ks.length ? `<ul class="m-ac-lista">${ks.map((k) => {
+      const f = frenos[k];
+      const txt = f.pausa ? `<span class="m-chip m-mal">en pausa</span> ${pp(f.exceso_medio)} de media`
+        : f.estado === "en_marcha" ? `<span class="m-chip m-bien">en marcha</span> ${pp(f.exceso_medio)} de media`
+        : `acumulando datos: <strong>${f.n} de ${f.necesarias}</strong> meses con más de un año${f.exceso_medio != null ? ` (de momento ${pp(f.exceso_medio)})` : ""}`;
+      return `<li><strong>${esc(nombrePaq(k))}</strong>: ${txt}</li>`;
+    }).join("")}</ul>` : "";
+    // 3) VIGILAR y sin IA
+    const vs = ac.veredictos || {};
+    h += `<h3>3 · ¿Hay que hacer caso a la IA?</h3>
+      <p class="m-dim">Hoy el reparto incluye también las VIGILAR y las «sin IA aún» (la prueba histórica no usaba la IA). Se mide cuánto rinden frente a las COMPRA de la misma sección; si rinden menos de forma clara durante ${vs.VIGILAR ? vs.VIGILAR.necesarias : 24} meses de elecciones con más de un año, dejan de recibir dinero.</p>`;
+    h += `<ul class="m-ac-lista">${[["VIGILAR", "VIGILAR"], ["SIN_TESIS", "«sin IA aún»"]].filter(([k]) => vs[k]).map(([k, nom]) => {
+      const r = vs[k];
+      const txt = r.excluir ? `<span class="m-chip m-mal">fuera del reparto</span> ${pp(r.diferencia_media)} frente a las COMPRA`
+        : r.estado === "dentro" ? `<span class="m-chip m-bien">siguen dentro</span> ${pp(r.diferencia_media)} frente a las COMPRA`
+        : `acumulando datos: <strong>${r.n} de ${r.necesarias}</strong> meses${r.diferencia_media != null ? ` (de momento ${pp(r.diferencia_media)} frente a las COMPRA)` : ""}`;
+      return `<li><strong>${nom}</strong>: ${txt}</li>`;
+    }).join("")}</ul>`;
+    if ((ac.notas || []).length) h += ac.notas.map((n) => `<div class="m-aviso">${esc(n)}</div>`).join("");
+    else h += `<p class="m-nota">Este mes la autocorrección no ha cambiado nada.</p>`;
+    return `<section class="m-card m-autocorr">${h}</section>`;
   }
 
   function seccionCartera() {
@@ -326,7 +408,7 @@
     calc.errores.forEach((e) => (h += `<div class="m-aviso">⚠️ ${esc(e)}</div>`));
     const porPaq = M.resumenPorPaquete(val.filas);
     if (Object.keys(porPaq).length > 1 || (Object.keys(porPaq).length === 1 && !porPaq.sin)) {
-      h += `<table class="m-tabla"><tr><th>Por paquete</th><th>Valor</th><th>Coste</th><th>Resultado</th></tr>${[...PAQS_ORDEN, ...PAQS_RETIRADOS, "sin"].filter((k) => porPaq[k]).map((k) => {
+      h += `<table class="m-tabla"><tr><th>Por paquete</th><th>Valor</th><th>Coste</th><th>Resultado</th></tr>${[...ordenPaqs(), ...PAQS_RETIRADOS.filter((k) => !ordenPaqs().includes(k)), "sin"].filter((k) => porPaq[k]).map((k) => {
         const o = porPaq[k], r = o.coste > 0 ? o.valor / o.coste - 1 : null;
         return `<tr><td>${k === "sin" ? "Sin paquete" : esc(nombrePaq(k))}</td><td class="num">${usd(o.valor, 0)}</td><td class="num">${usd(o.coste, 0)}</td><td class="num"><span class="${(r ?? 0) >= 0 ? "m-pos" : "m-neg"}">${r != null ? signo(r * 100, 1) + " %" : "—"}</span></td></tr>`;
       }).join("")}</table>`;
@@ -344,9 +426,11 @@
         imp = `<p><strong>Si vendieras todo ahora:</strong> resultado ≈ ${signo(s.resultado)} $, impuesto estimado ≈ ${usd(s.impuesto)} (al ${pct(cfg.impuesto)}; aproximación, no asesoramiento fiscal).</p>` +
               avisos.map((a) => `<p class="m-aviso">⚠️ ${esc(a)}</p>`).join("");
       }
-      h += `<article class="m-posicion ${abierta ? "abierta" : ""}">
+      const ep = (informe && informe.empresas && informe.empresas[f.ticker]) || {};
+      const cvp = cambioDe(ep.va, ep.v, ep.vc);
+      h += `<article class="m-posicion ${abierta ? "abierta" : ""} ${cvp ? "cambio-" + cvp.tipo : ""}">
         <div class="m-cab">
-          <div><div class="m-tk">${esc(f.ticker)} ${chip(etiqueta, clase)}${f.paq ? " " + chip(nombrePaq(f.paq)) : ""}</div><div class="m-nombre">${esc(f.nombre)}</div></div>
+          <div><div class="m-tk">${esc(f.ticker)} ${chip(etiqueta, clase)}${f.paq ? " " + chip(nombrePaq(f.paq)) : ""}</div><div class="m-nombre">${esc(f.nombre)}</div>${etiquetaCambio(cvp)}</div>
           <div class="m-precio num">${f.valor != null ? usd(f.valor, 0) : "—"}<small class="${(f.pl ?? 0) >= 0 ? "m-pos" : "m-neg"}">${f.plPct != null ? signo(f.plPct * 100, 1) + " %" : "sin precio"}</small></div>
         </div>
         <div class="m-dim m-linea">${num(f.acciones, 4)} acc. · coste medio ${num(f.costeMedio)} · ${f.peso != null ? pct(f.peso) + " de la cartera" : ""} · desde ${esc(fecha(f.desde))}</div>
@@ -397,7 +481,7 @@
           <label>Fecha<input name="fecha" type="date" required value="${esc(p.fecha || M.hoyISO())}"></label>
         </div>
         <label>Paquete (opcional, para ver tu resultado por horizonte)
-          <select name="paq"><option value="">—</option>${[...PAQS_ORDEN, ...PAQS_RETIRADOS.filter((k) => p.paq === k)].map((k) => `<option value="${k}" ${p.paq === k ? "selected" : ""}>${esc(nombrePaq(k))}</option>`).join("")}</select></label>
+          <select name="paq"><option value="">—</option>${[...ordenPaqs(), ...PAQS_RETIRADOS.filter((k) => p.paq === k && !ordenPaqs().includes(k))].map((k) => `<option value="${k}" ${p.paq === k ? "selected" : ""}>${esc(nombrePaq(k))}</option>`).join("")}</select></label>
         <div id="m-form-msg"></div>
         <button class="m-btn m-btn-ppal" type="submit">Guardar operación</button>
       </form>`;
@@ -426,6 +510,7 @@
         <li><strong>Qué se ha quitado:</strong> los paquetes por años (1–3, 3–5 y 5+). Ninguno batió a elegir sin criterio entre las mismas empresas. El de 3–5 años parecía aprobar por poco, pero la prueba tenía un fallo (precios antiguos ajustados por splits que hacían parecer baratas a las futuras ganadoras); corregido, suspende (−1,7 puntos a 1 año). Las compras que ya tengas anotadas con ellos se conservan, marcadas «retirado».</li>
         <li><strong>Cuánto fiarse:</strong> a la prueba le faltan las empresas que quebraron (sesgo a favor), y el pasado no se repite. Es experimental: el juez es el «Seguimiento» (pequeñas frente al Russell 2000, grandes frente al S&amp;P 500) y tu marcador frente al S&amp;P 500. Dale 12-24 meses con importes que puedas permitirte. Las pequeñas se mueven más que las grandes: espera años malos. Vender por precio rindió peor que el índice: aquí no se manda vender por precio, sino si la empresa deja de cumplir las reglas (tu cartera te avisa).</li>
         <li><strong>Dividendos (small caps):</strong> empresas pequeñas del Russell 2000 que pagan dividendo y <em>no lo recortan</em>, con caja que lo cubre, poca deuda y sin diluir. La rentabilidad anual es precio + dividendo y se compara con el Russell 2000. <strong>No está probada en el pasado</strong> (faltan las que quebraron). Si una que tienes recorta o deja de pagar el dividendo, «Mi cartera» la marca como tesis rota. Tu cartera de aquí no suma los dividendos que cobres: llévalos aparte.</li>
+        <li><strong>Autocorrección:</strong> cada mes se repite la prueba histórica con los datos al día y, si el filtro de una sección deja de batir a su índice, se cambia o se pone en pausa. Con el tiempo, además, los resultados reales pueden pausar una sección o dejar fuera del reparto a las VIGILAR, pero solo con 1-2 años de datos y una diferencia clara. Todo queda a la vista en la tarjeta «Autocorrección».</li>
         <li>Los análisis de tesis del bot y los chequeos solo pueden quitar o avisar sobre una candidata, nunca añadirla. Las marcadas «sin IA aún» solo han pasado los números.</li>
         <li>Información automática; no es asesoramiento financiero ni fiscal.</li>
       </ul></section>`;
@@ -439,7 +524,7 @@
     else if (estadoCarga === "sinTabla") h = `<section class="m-card"><h2>Falta un paso</h2><p>Todavía no existe la tabla del módulo mensual en Supabase. Aplica la migración <code>db/006_mensual.sql</code> (Supabase → SQL Editor → pegar → Run) y vuelve a abrir esta pestaña.</p></section>`;
     else if (estadoCarga === "vacio") h = `<section class="m-card"><h2>Aún no hay informe</h2><p>Lanza el workflow <strong>Recomendador mensual</strong> (GitHub → Actions → Run workflow). Tarda unos minutos y aquí aparecerán las candidatas del mes.</p></section>`;
     else if (estadoCarga === "error") h = `<div class="error">No se pudo cargar el informe.<br>${esc(mensajeError)}</div>`;
-    else h = (aviso ? `<div class="m-aviso">${esc(aviso)}</div>` : "") + seccionPaquetes() + seccionCartera() + seccionMarcador() + seccionSeguimiento();
+    else h = (aviso ? `<div class="m-aviso">${esc(aviso)}</div>` : "") + seccionPaquetes() + seccionCartera() + seccionMarcador() + seccionSeguimiento() + seccionAutocorreccion();
     if (estadoCarga === "ok" || estadoCarga === "vacio" || estadoCarga === "sinTabla") h += seccionRegistro();
     h += seccionNotas();
     const y = window.scrollY;
