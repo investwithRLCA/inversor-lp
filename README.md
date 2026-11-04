@@ -334,6 +334,25 @@ mismo se calculan, sin enviar nada: el reparto de tu importe, el estado de cada 
 rota, peso, revisión a los 24 meses), el impuesto estimado de vender (FIFO, aproximado), el aviso de
 la regla de los 2 meses y el marcador frente al S&P 500.
 
+### Tarta de Trading 212 (desde el iPhone)
+
+En cada sección de «Este mes», el bloque **«Crear esta tarta en Trading 212»** prepara una tarta
+(*pie*) con las empresas elegidas y sus porcentajes (el reparto de tu importe si lo has escrito,
+teniendo en cuenta los topes de tu cartera; si no, el orientativo). Se pueden desmarcar las que
+Trading 212 no tenga (se recuerda) y elegir qué hacer con los dividendos. **No compra nada**: crea la
+tarta y luego, en Trading 212, metes el dinero y ella lo reparte. Opcionalmente, «Apuntar estas
+compras en mi cartera» las registra de una vez al precio del informe.
+
+Cómo llega a Trading 212: su API no admite llamadas desde una página web y tu clave no debe salir
+del móvil, así que Vigía no habla con Trading 212. Abre un atajo de la app **Atajos** del iPhone
+(`Vigia T212`, se prepara una vez siguiendo los pasos del propio bloque) y le pasa la tarta; el
+atajo la envía a `POST /api/v0/equity/pies` con tu clave. La clave se crea en Trading 212 con
+permisos **solo de «Pies»** (no puede comprar, vender ni sacar dinero) y vive solo dentro del atajo:
+ni Vigía, ni GitHub, ni Supabase la ven. Ojo: Trading 212 marcó en 2025 las funciones de tartas de
+su API como «deprecated» (sin más mejoras); si algún día dejan de funcionar, el atajo enseñará el
+error. Lógica pura y probada en `docs/mensual.js` (`pesosTarta`, `cuerpoTarta`, `enlaceAtajoT212`,
+`comprasDeTarta`).
+
 ### Ficheros
 
 | Fichero | Qué es |

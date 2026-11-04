@@ -366,12 +366,12 @@
   .m-aviso { background: rgba(201,162,39,0.10); border: 1px solid var(--brass-dim); color: var(--paper); border-radius: 10px; padding: 9px 12px; font-size: 12.5px; line-height: 1.5; margin: 8px 0; }
   p.m-aviso { margin: 6px 0; }
   .m-campo { display: block; font-size: 12px; color: var(--slate); margin: 12px 0; }
-  .m-campo input, .m-form input, .m-form select {
+  .m-campo input, .m-campo select, .m-form input, .m-form select {
     display: block; width: 100%; margin-top: 5px; padding: 11px 12px; border-radius: 10px;
     border: 1px solid var(--hairline); background: var(--ink-3); color: var(--paper);
     font: 500 16px 'IBM Plex Sans', sans-serif;
   }
-  .m-campo input:focus, .m-form input:focus, .m-form select:focus { outline: 2px solid var(--brass); outline-offset: -1px; }
+  .m-campo input:focus, .m-campo select:focus, .m-form input:focus, .m-form select:focus { outline: 2px solid var(--brass); outline-offset: -1px; }
   .m-pequeno input { max-width: 120px; }
   .m-fila2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .m-form label { display: block; font-size: 12px; color: var(--slate); margin-bottom: 10px; }
@@ -434,6 +434,16 @@
   .m-paq-info { margin: 4px 0 8px; font-size: 14px; line-height: 1.5; }
   .m-paq-info p { margin: 6px 0; }
   .m-card code { font-family: 'IBM Plex Mono', monospace; background: var(--ink-3); padding: 1px 5px; border-radius: 4px; }
+  .m-t212 { margin-top: 14px; padding: 12px; border: 1px solid var(--brass); border-radius: 12px; background: var(--ink-3); font-size: 13px; line-height: 1.5; }
+  .m-t212 > summary { cursor: pointer; color: var(--paper); }
+  .m-t212 .m-tabla td:nth-child(3) { text-align: left; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; }
+  .m-t212 .m-tabla th:nth-child(3) { text-align: left; }
+  .m-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .m-check input { width: 18px; height: 18px; accent-color: var(--brass); }
+  .m-pasos { padding-left: 20px; line-height: 1.55; } .m-pasos li { margin-bottom: 8px; } .m-pasos ul { padding-left: 16px; margin: 4px 0; }
+  .m-pasos code { overflow-wrap: anywhere; }
+  .m-pre { white-space: pre-wrap; word-break: break-all; font: 11px 'IBM Plex Mono', monospace; background: var(--ink); padding: 8px; border-radius: 8px; color: var(--paper-dim); }
+  a.m-btn { text-decoration: none; display: inline-block; }
 </style>
 </head>
 <body>
@@ -806,8 +816,8 @@ async function cargar() {
 cargar();
 cargarMercados();
 </script>
-<script src="mensual.js?v=8"></script>
-<script src="mensual-ui.js?v=8"></script>
+<script src="mensual.js?v=9"></script>
+<script src="mensual-ui.js?v=9"></script>
 
 </body>
 </html>

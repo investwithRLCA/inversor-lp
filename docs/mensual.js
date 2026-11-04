@@ -370,11 +370,73 @@
     };
   }
 
+  // ───────────────────────── tarta de Trading 212 ─────────────────────────
+  // Vigía no habla con Trading 212 (su API no acepta llamadas desde una página web y,
+  // además, tu clave no debe salir de tu móvil). Prepara la tarta y se la pasa a un
+  // atajo de la app Atajos del iPhone, que es quien la envía con tu clave.
+
+  const NOMBRE_ATAJO_T212 = "Vigia T212";
+
+  /** Ticker de Trading 212 de una acción de EE. UU.: AAPL → AAPL_US_EQ, BRK.B → BRK_B_US_EQ. */
+  function tickerT212(t) {
+    return String(t || "").trim().toUpperCase().replace(/[.\-\/ ]+/g, "_") + "_US_EQ";
+  }
+
+  /** Porcentajes de la tarta (fracciones con 4 decimales que suman exactamente 1),
+   *  proporcionales a `importes` {ticker: cantidad}, sin las `excluidas` ni las de 0. */
+  function pesosTarta(importes, excluidas) {
+    const ex = new Set(excluidas || []);
+    const ent = Object.entries(importes || {}).filter(([t, v]) => !ex.has(t) && Number(v) > 0);
+    const total = ent.reduce((s, [, v]) => s + Number(v), 0);
+    if (!(total > 0)) return {};
+    const U = 10000;                                  // unidades de 0,01 %
+    const filas = ent.map(([t, v]) => {
+      const x = (Number(v) / total) * U, base = Math.floor(x + 1e-9);
+      return { t, base, resto: x - base };
+    });
+    let falta = U - filas.reduce((s, f) => s + f.base, 0);
+    [...filas].sort((a, b) => b.resto - a.resto || (a.t < b.t ? -1 : 1)).forEach((f) => { if (falta > 0) { f.base++; falta--; } });
+    const out = {};
+    filas.forEach((f) => { if (f.base > 0) out[f.t] = f.base / U; });
+    return out;
+  }
+
+  /** Cuerpo de la petición «crear tarta» de la API de Trading 212. */
+  function cuerpoTarta(nombre, pesos, dividendos) {
+    const reparto = {};
+    Object.entries(pesos).forEach(([t, w]) => (reparto[tickerT212(t)] = w));
+    return {
+      name: String(nombre || "Vigía").slice(0, 40),
+      dividendCashAction: dividendos === "TO_ACCOUNT_CASH" ? "TO_ACCOUNT_CASH" : "REINVEST",
+      instrumentShares: reparto,
+    };
+  }
+
+  /** Enlace que abre el atajo del iPhone y le pasa la tarta como texto. */
+  function enlaceAtajoT212(cuerpo, nombreAtajo) {
+    return "shortcuts://run-shortcut?name=" + encodeURIComponent(nombreAtajo || NOMBRE_ATAJO_T212) +
+           "&input=text&text=" + encodeURIComponent(JSON.stringify(cuerpo));
+  }
+
+  /** Compras para apuntar en la cartera a partir de la tarta: el `total` repartido con sus
+   *  porcentajes, al `precios[ticker]` (el del informe). Devuelve operaciones sin normalizar. */
+  function comprasDeTarta(pesos, total, precios, fecha, paq) {
+    const out = [];
+    Object.entries(pesos).forEach(([t, w]) => {
+      const p = Number((precios || {})[t]);
+      if (!(p > 0) || !(total > 0)) return;
+      const acciones = Math.floor(((total * w) / p) * 10000 + 1e-9) / 10000;
+      if (acciones > 0) out.push({ tipo: "compra", ticker: t, acciones, precio: p, comision: 0, fecha, paq });
+    });
+    return out;
+  }
+
   const API = {
-    TOPE_POSICION, MESES_REVISION, TESIS_ANTIGUA_DIAS, PAQUETES,
+    TOPE_POSICION, MESES_REVISION, TESIS_ANTIGUA_DIAS, PAQUETES, NOMBRE_ATAJO_T212,
     ms, iso, hoyISO, sumarDias, mesesEntre,
     normalizarOperacion, calcular, valorar, revisar, resumenPorPaquete, impuestoSiVende,
     avisosDosMeses, avisosVentaConPerdida, repartir, xirr, precioSpy, marcador,
+    tickerT212, pesosTarta, cuerpoTarta, enlaceAtajoT212, comprasDeTarta,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = API;
   else raiz.Mensual = API;

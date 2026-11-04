@@ -225,6 +225,69 @@
       </table></div></details>`;
   }
 
+  // ───────────── tarta de Trading 212 (vía la app Atajos del iPhone) ─────────────
+  const URL_T212 = "https://live.trading212.com/api/v0/equity/pies";
+  const mesCorto = (mes) => /^\d{4}-\d{2}$/.test(mes || "")
+    ? new Date(mes + "-01T00:00:00").toLocaleDateString("es-ES", { month: "short", year: "numeric" }).replace(".", "") : (mes || "");
+
+  /** Lo que lleva la tarta de esta sección: {pesos, cuerpo, enlace, total}. Sin importe, el reparto orientativo. */
+  function tartaDe(sel, P, cands, reparto, hayImporte) {
+    const base = {};
+    // sin importe: el reparto orientativo del informe (a partes iguales si no lo trae, como en Dividendos)
+    cands.forEach((c) => (base[c.ticker] = hayImporte ? (reparto.compras[c.ticker] || 0) : (c.peso > 0 ? c.peso : 1)));
+    const fuera = (cfg.t212Fuera || []).filter((t) => t in base);
+    const pesos = M.pesosTarta(base, fuera);
+    const nombre = `Vigía ${P.etiqueta || NOMBRE_PAQ[sel] || sel} ${mesCorto(informe.mes)}`;
+    const cuerpo = M.cuerpoTarta(nombre, pesos, cfg.t212Div);
+    const total = Object.entries(base).filter(([t]) => pesos[t]).reduce((s, [, v]) => s + v, 0);
+    return { pesos, cuerpo, nombre, enlace: M.enlaceAtajoT212(cuerpo), total, fuera: new Set(fuera) };
+  }
+
+  function bloqueT212(sel, P, cands, reparto, hayImporte) {
+    const T = tartaDe(sel, P, cands, reparto, hayImporte);
+    const n = Object.keys(T.pesos).length;
+    const filas = cands.map((c) => {
+      const w = T.pesos[c.ticker], quitada = T.fuera.has(c.ticker);
+      const tope = hayImporte && !(reparto.compras[c.ticker] > 0);
+      const casilla = tope ? "" : `<input type="checkbox" data-accion="t212fuera" data-t="${esc(c.ticker)}" ${quitada ? "" : "checked"} aria-label="Incluir ${esc(c.ticker)}">`;
+      return `<tr><td><label class="m-check">${casilla}<strong>${esc(c.ticker)}</strong></label></td>
+        <td class="num">${w ? pct(w, 1) : "—"}</td>
+        <td class="m-dim">${quitada ? "quitada" : tope ? "ya pesa el tope en tu cartera" : esc(M.tickerT212(c.ticker))}</td></tr>`;
+    }).join("");
+    const pasos = `<ol class="m-pasos">
+        <li><strong>Clave de Trading 212.</strong> En Trading 212: Ajustes → <em>API (Beta)</em> → generar una clave nueva. En los permisos marca <strong>solo los de «Pies»</strong> (así la clave solo puede crear tartas: no puede comprar, vender ni sacar dinero). Te da una <em>clave</em> y un <em>secreto</em>: cópialos (el secreto solo se ve una vez).</li>
+        <li><strong>Atajo nuevo.</strong> Abre la app <em>Atajos</em> → «+» → ponle de nombre exactamente <code>${esc(M.NOMBRE_ATAJO_T212)}</code>.</li>
+        <li>Añade la acción <strong>Texto</strong> y escribe tu clave, dos puntos y tu secreto, todo junto: <code>CLAVE:SECRETO</code>.</li>
+        <li>Añade la acción de <strong>Base64</strong> (escribe «Base64» en el buscador de acciones; es la de <em>codificar</em>). Toca la flecha y pon <em>Saltos de línea</em>: <strong>Ninguno</strong> (importante).</li>
+        <li>Añade la acción <strong>Obtener contenido de URL</strong> (búscala por «contenido»). URL: <code>${esc(URL_T212)}</code>. Toca la flecha:
+          <ul><li><em>Método</em>: <strong>POST</strong>.</li>
+              <li><em>Encabezados</em> → añadir dos: <code>Authorization</code> con el texto <code>Basic </code> (con un espacio detrás) seguido de la variable que sale del paso de Base64 (tócala en la barra de variables); y <code>Content-Type</code> con <code>application/json</code>.</li>
+              <li><em>Cuerpo de la solicitud</em>: <strong>Archivo</strong> → elige la variable <em>Entrada del atajo</em>.</li></ul></li>
+        <li>Añade la acción <strong>Mostrar resultado</strong>, con la variable que sale del paso anterior (la respuesta de Trading 212). Listo.</li>
+      </ol>
+      <p class="m-dim">Tu clave queda solo dentro de ese atajo, en tu iPhone: Vigía no la ve ni la guarda, y no pasa por GitHub ni por Supabase. Si algún día quieres cortar el acceso, borra la clave en Trading 212.</p>`;
+    const totalTxt = hayImporte && T.total > 0 ? `<p class="m-dim">Con tu importe: ${usd(T.total)} repartidos así. En Trading 212 metes el dinero en la tarta (en euros si tu cuenta es en euros) y ella lo reparte con estos porcentajes.</p>` : "";
+    return `<details class="m-t212" data-k="t212" ${abiertos.has("t212") ? "open" : ""}>
+      <summary><strong>Crear esta tarta en Trading 212</strong> <span class="m-dim">(${n} empresa${n === 1 ? "" : "s"})</span></summary>
+      <p class="m-dim">Crea en tu Trading 212 una tarta (pie) con las empresas de esta sección y estos porcentajes${hayImporte ? "" : " (los orientativos; si escribes arriba cuánto vas a invertir, tienen en cuenta lo que ya tienes)"}. <strong>No compra nada:</strong> la creas, la revisas en Trading 212 y, cuando quieras, metes el dinero y ella lo reparte. Quita (desmarca) las que Trading 212 no tenga: se recordará.</p>
+      ${totalTxt}
+      <table class="m-tabla"><tr><th>Empresa</th><th>En la tarta</th><th>Ticker en Trading 212</th></tr>${filas}</table>
+      <p class="m-dim">Nombre de la tarta: <strong>${esc(T.cuerpo.name)}</strong></p>
+      <div>
+        <label class="m-campo">Dividendos<select id="m-t212-div">
+          <option value="REINVEST" ${T.cuerpo.dividendCashAction === "REINVEST" ? "selected" : ""}>Reinvertir en la tarta</option>
+          <option value="TO_ACCOUNT_CASH" ${T.cuerpo.dividendCashAction === "TO_ACCOUNT_CASH" ? "selected" : ""}>Al efectivo de la cuenta</option></select></label>
+      </div>
+      <div class="m-acciones">
+        ${n ? `<a class="m-btn m-btn-ppal" href="${esc(T.enlace)}">Crear la tarta en Trading 212</a>` : `<span class="m-dim">No queda ninguna empresa en la tarta.</span>`}
+        ${n && hayImporte ? `<button class="m-btn" data-accion="t212apuntar">Apuntar estas ${n} compras en mi cartera</button>` : ""}
+      </div>
+      <p class="m-nota">Funciona en iPhone o iPad con la app Atajos (abajo, cómo prepararlo una vez). Al pulsar, se abre el atajo, envía la tarta y te enseña la respuesta de Trading 212. Si le das dos veces, se crean dos tartas: borra la que sobre. Si Trading 212 contesta con un error, haz una captura y pásamela.</p>
+      <details class="m-det" data-k="t212-config" ${abiertos.has("t212-config") ? "open" : ""}><summary>Preparar el atajo del iPhone (solo la primera vez)</summary>${pasos}</details>
+      <details class="m-det" data-k="t212-json" ${abiertos.has("t212-json") ? "open" : ""}><summary>Ver lo que se envía</summary><pre class="m-pre">${esc(JSON.stringify(T.cuerpo, null, 1))}</pre></details>
+    </details>`;
+  }
+
   function seccionPaquetes() {
     const inf = informe;
     const paqs = paquetesDe(inf);
@@ -278,6 +341,7 @@
       if (reparto.sobrante > 0.005) {
         h += `<div class="m-aviso">${usd(reparto.sobrante)} no caben por los topes (máx. ${pct(inf.parametros.tope_posicion)} por empresa): guárdalos para el mes que viene, no los fuerces.</div>`;
       }
+      if (!retirado(sel)) h += bloqueT212(sel, P, cands, reparto, hayImporte);
     }
 
     const otras = [].concat((P.vetadas || []).map((v) => `<li><strong>${esc(v.ticker)}</strong> (frenada): ${esc(v.motivo)}</li>`),
@@ -551,6 +615,31 @@
     const fic = document.getElementById("m-importar");
     if (fic) fic.addEventListener("change", onImportar);
     $m.querySelectorAll("[data-accion]").forEach((b) => b.addEventListener("click", onAccion));
+    const div = document.getElementById("m-t212-div");
+    if (div) div.addEventListener("change", (e) => { cfg.t212Div = e.target.value; guardar(CLAVE_CFG, cfg); pintar(); });
+    $m.querySelectorAll("details[data-k]").forEach((d) => d.addEventListener("toggle", () => (d.open ? abiertos.add(d.dataset.k) : abiertos.delete(d.dataset.k))));
+  }
+
+  /** Apunta en la cartera las compras de la tarta (al precio del informe), tras confirmar. */
+  function apuntarTarta() {
+    const paqs = paquetesDe(informe), sel = cfg.paquete, P = paqs[sel];
+    if (!P) return;
+    const importe = parseFloat(String(cfg.importe).replace(",", "."));
+    if (!(importe > 0)) return;
+    const cands = P.candidatas || [];
+    const { valorPos } = valoresPos();
+    const reparto = M.repartir(importe, cands.map((c) => c.ticker), valorPos, informe.parametros.tope_posicion);
+    const T = tartaDe(sel, P, cands, reparto, true);
+    const precios = {};
+    cands.forEach((c) => (precios[c.ticker] = c.precio));
+    const nuevas = M.comprasDeTarta(T.pesos, T.total, precios, M.hoyISO(), sel).map((o) => M.normalizarOperacion(o).op).filter(Boolean);
+    if (!nuevas.length) return;
+    const txt = nuevas.map((o) => `${o.ticker}: ${num(o.acciones, 4)} acc. × ${num(o.precio)} $`).join("\n");
+    if (!window.confirm(`Se apuntarán ${nuevas.length} compras por ${usd(T.total)} en total, al precio del informe (${fecha(informe.datos_a)}):\n\n${txt}\n\nEl precio real en Trading 212 será algo distinto. Apúntalas solo cuando hayas metido el dinero en la tarta. ¿Seguir?`)) return;
+    ops = [...ops, ...nuevas]; guardar(CLAVE_OPS, ops);
+    aviso = `Apuntadas ${nuevas.length} compras de la tarta (${nuevas.map((o) => o.ticker).join(", ")}). Si alguna se ejecutó a otro precio, bórrala abajo y apúntala a mano.`;
+    pintar();
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function onAccion(e) {
@@ -559,6 +648,13 @@
       cfg.paquete = b.dataset.paq; guardar(CLAVE_CFG, cfg); pintar();
       return;
     }
+    if (a === "t212fuera") {
+      const s = new Set(cfg.t212Fuera || []);
+      b.checked ? s.delete(t) : s.add(t);
+      cfg.t212Fuera = [...s]; guardar(CLAVE_CFG, cfg); pintar();
+      return;
+    }
+    if (a === "t212apuntar") { apuntarTarta(); return; }
     if (a === "detalle" || a === "detallepos") {
       const k = b.dataset.k || ((a === "detalle" ? "c:" : "p:") + t);
       abiertos.has(k) ? abiertos.delete(k) : abiertos.add(k);
