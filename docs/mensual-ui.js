@@ -254,16 +254,19 @@
         <td class="num">${w ? pct(w, 1) : "—"}</td>
         <td class="m-dim">${quitada ? "quitada" : tope ? "ya pesa el tope en tu cartera" : esc(M.tickerT212(c.ticker))}</td></tr>`;
     }).join("");
-    const pasos = `<ol class="m-pasos">
-        <li><strong>Clave de Trading 212.</strong> En Trading 212: Ajustes → <em>API (Beta)</em> → generar una clave nueva. En los permisos marca <strong>solo los de «Pies»</strong> (así la clave solo puede crear tartas: no puede comprar, vender ni sacar dinero). Te da una <em>clave</em> y un <em>secreto</em>: cópialos (el secreto solo se ve una vez).</li>
-        <li><strong>Atajo nuevo.</strong> Abre la app <em>Atajos</em> → «+» → ponle de nombre exactamente <code>${esc(M.NOMBRE_ATAJO_T212)}</code>.</li>
-        <li>Añade la acción <strong>Texto</strong> y escribe tu clave, dos puntos y tu secreto, todo junto: <code>CLAVE:SECRETO</code>.</li>
-        <li>Añade la acción de <strong>Base64</strong> (escribe «Base64» en el buscador de acciones; es la de <em>codificar</em>). Toca la flecha y pon <em>Saltos de línea</em>: <strong>Ninguno</strong> (importante).</li>
-        <li>Añade la acción <strong>Obtener contenido de URL</strong> (búscala por «contenido»). URL: <code>${esc(URL_T212)}</code>. Toca la flecha:
-          <ul><li><em>Método</em>: <strong>POST</strong>.</li>
-              <li><em>Encabezados</em> → añadir dos: <code>Authorization</code> con el texto <code>Basic </code> (con un espacio detrás) seguido de la variable que sale del paso de Base64 (tócala en la barra de variables); y <code>Content-Type</code> con <code>application/json</code>.</li>
-              <li><em>Cuerpo de la solicitud</em>: <strong>Archivo</strong> → elige la variable <em>Entrada del atajo</em>.</li></ul></li>
-        <li>Añade la acción <strong>Mostrar resultado</strong>, con la variable que sale del paso anterior (la respuesta de Trading 212). Listo.</li>
+    const pasos = `<p class="m-dim">Nombres de las acciones en inglés (como salen en un iPhone en inglés); en español, entre paréntesis.</p>
+      <ol class="m-pasos">
+        <li><strong>Clave de Trading 212.</strong> En Trading 212: Settings (Ajustes) → <em>API (Beta)</em> → generar una clave nueva. En los permisos marca <strong>solo los de «Pies»</strong> (así la clave solo puede crear tartas: no puede comprar, vender ni sacar dinero). Te da una <em>clave</em> y un <em>secreto</em>: cópialos (el secreto solo se ve una vez).</li>
+        <li><strong>Atajo nuevo.</strong> App <em>Shortcuts</em> (Atajos) → «+» → nombre exactamente <code>${esc(M.NOMBRE_ATAJO_T212)}</code>. Las acciones se añaden con <em>Search Actions</em> y se van poniendo una debajo de otra.</li>
+        <li><strong>Text</strong> (Texto): pega tu clave, dos puntos y tu secreto, todo junto y sin espacios: <code>CLAVE:SECRETO</code>.</li>
+        <li><strong>Base64 Encode</strong> (Codificar en Base64): toca la flechita de la acción → <em>Line Breaks</em> (Saltos de línea): <strong>None</strong> (Ninguno). Importante.</li>
+        <li><strong>Get Contents of URL</strong> (Obtener contenido de URL). En URL pega <code>${esc(URL_T212)}</code> y toca la flechita:
+          <ul><li><em>Method</em>: <strong>POST</strong>.</li>
+              <li><em>Headers</em> → <em>Add new header</em> dos veces. Primera: clave <code>Authorization</code>; en el valor escribe <code>Basic</code> y un espacio, y luego toca la burbuja <em>Base64 Encoded</em> que sale encima del teclado. Segunda: clave <code>Content-Type</code>, valor <code>application/json</code>.</li>
+              <li><em>Request Body</em>: cámbialo de JSON a <strong>File</strong>; en el campo <em>File</em> elige la variable <strong>Shortcut Input</strong> (Entrada del atajo).</li></ul></li>
+        <li><strong>Show Result</strong> (Mostrar resultado): debe quedar <em>Show Contents of URL</em>. Así ves lo que contesta Trading 212.</li>
+        <li>Opcional, al final de todo: <strong>Open App</strong> → Trading 212, para ir a ver la tarta.</li>
+        <li><em>Done</em>. La primera vez, al usarlo, iPhone pregunta si el atajo puede conectarse a trading212.com: <em>Allow</em>.</li>
       </ol>
       <p class="m-dim">Tu clave queda solo dentro de ese atajo, en tu iPhone: Vigía no la ve ni la guarda, y no pasa por GitHub ni por Supabase. Si algún día quieres cortar el acceso, borra la clave en Trading 212.</p>`;
     const totalTxt = hayImporte && T.total > 0 ? `<p class="m-dim">Con tu importe: ${usd(T.total)} repartidos así. En Trading 212 metes el dinero en la tarta (en euros si tu cuenta es en euros) y ella lo reparte con estos porcentajes.</p>` : "";
