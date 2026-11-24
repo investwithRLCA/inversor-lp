@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "actualizado": "2026-11-03",
+  "actualizado": "2026-11-24",
   "grupos": {
     "pequenas": {
       "variante": "lynch_cribado",
       "activo": true,
       "motivo": "sigue aprobando",
-      "ex12": 0.06221664260366325,
-      "ex24": 0.14748490744726211,
+      "ex12": 0.06294103998899735,
+      "ex24": 0.14769442160204377,
       "aprueban": [
         "lynch",
         "lynch_cribado"
@@ -17,8 +17,8 @@
       "variante": "calidad",
       "activo": true,
       "motivo": "sigue aprobando",
-      "ex12": 0.024608695091948993,
-      "ex24": 0.0629208503450929,
+      "ex12": 0.024689506582203858,
+      "ex24": 0.06271763962305255,
       "aprueban": [
         "calidad"
       ]
