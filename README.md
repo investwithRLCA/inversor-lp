@@ -355,13 +355,22 @@ error. Lógica pura y probada en `docs/mensual.js` (`pesosTarta`, `cuerpoTarta`,
 
 ### Compra automática cada mes (atajo «Vigia Compra»)
 
-Tras el informe del día 1, `backend/mensual/compra_t212.py` publica en `docs/compra/<sección>-<AAAA-MM>.json`
-la lista de la compra de cada sección: empresas, ticker de Trading 212, peso y acciones por cada 100 €
-(con el cambio euro/dólar del BCE). Las de `backend/mensual/t212_no_disponibles.txt` se quitan. Un atajo
-del iPhone, lanzado por una automatización mensual, lee la lista del mes en curso, multiplica por tu importe
-(que vive solo en el atajo) y lanza una orden de compra a mercado por empresa. **Solo compra: nunca vende.**
-Si no hay informe ese mes, no hay lista y no compra nada. En Vigía, «Apuntar la compra automática» registra
-en tu cartera local exactamente las mismas acciones. Pasos de montaje en el propio bloque de «Este mes».
+El workflow «Compra del mes» (`.github/workflows/compra.yml`) publica la lista de la compra **una vez al mes**:
+el primer día de bolsa de EE. UU. del mes, a las 15:07 UTC (bolsa abierta en verano y en invierno), con precios
+de ese momento (Finnhub; si uno se aleja más de un 35 % del informe se usa el del informe) y el cambio euro/dólar
+del BCE. Escribe `docs/compra/<sección>-<AAAA-MM>.json` (archivo) y `docs/compra/<sección>.json` (la última).
+Las empresas de `backend/mensual/t212_no_disponibles.txt` se quitan. No se genera si el último informe no es
+del mes en curso, si la bolsa está cerrada o si la lista del mes ya existe (a mano, «forzar» solo para pruebas).
+
+Por qué hay dólares: tú pagas en euros y Trading 212 convierte solo, pero su API solo admite órdenes en número
+de acciones, así que «por100» (acciones por cada 100 €) se calcula con el precio en dólares y el cambio. Se gasta
+el 98 % del importe (margen para subidas de precio y la comisión de cambio) y se redondea hacia abajo a 3 decimales.
+
+El atajo del iPhone, con una automatización diaria a las 18:30, mira si ya compró este mes (un fichero suyo en
+iCloud) y si la última lista es de este mes; si toca, multiplica por tu importe (que vive solo en el atajo) y lanza
+una orden de compra a mercado por empresa; con la bolsa cerrada, Trading 212 la deja pendiente hasta que abre.
+**Solo compra: nunca vende.** En Vigía, «Apuntar la compra automática» registra en tu cartera local exactamente
+las mismas acciones. Pasos de montaje en el propio bloque de «Este mes».
 
 ### Ficheros
 

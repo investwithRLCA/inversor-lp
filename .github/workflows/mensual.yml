@@ -41,7 +41,7 @@ on:
 
 permissions:
   issues: write
-  contents: write   # publica docs/compra/ (lista de la compra para el atajo del iPhone)
+  contents: read
 
 jobs:
   recomendar:
@@ -76,23 +76,6 @@ jobs:
           python -m mensual.recomendador $EXTRA \
             --salida informe_mensual.json --md issue_mensual.md \
             --url-dashboard "https://${OWNER}.github.io/${REPO}/"
-
-      - name: Publicar la lista de la compra del mes (atajo «Vigia Compra» del iPhone)
-        if: success() && (github.event.inputs.guardar || 'true') == 'true'
-        working-directory: backend
-        run: |
-          python -m mensual.compra_t212 --informe informe_mensual.json --salida ../docs/compra
-          cd ..
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/compra
-          if git diff --cached --quiet; then echo "Sin cambios."; exit 0; fi
-          git commit -m "Compra del mes: lista para Trading 212"
-          for i in 1 2 3; do
-            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
-            sleep 5
-          done
-          exit 1
 
       - name: Mostrar el resumen en la página de la ejecución
         if: always()

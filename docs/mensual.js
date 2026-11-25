@@ -432,11 +432,11 @@
   }
 
   /** Operaciones que corresponden a la compra automática del atajo: mismas acciones que él
-   *  (por100 × importe € / 100, redondeado hacia abajo a centésimas), al precio del informe. */
+   *  (por100 × importe € / 100, redondeado hacia abajo a 3 decimales), al precio de la lista. */
   function comprasAuto(doc, importeEur, fecha, paq) {
     const out = [];
     ((doc && doc.ordenes) || []).forEach((o) => {
-      const acciones = Math.floor(Number(o.por100) * Number(importeEur) / 100 * 100 + 1e-9) / 100;
+      const acciones = Math.floor(Number(o.por100) * Number(importeEur) / 100 * 1000 + 1e-9) / 1000;
       if (acciones > 0 && o.precio_usd > 0) out.push({ tipo: "compra", ticker: o.empresa, acciones, precio: o.precio_usd, comision: 0, fecha, paq });
     });
     return out;

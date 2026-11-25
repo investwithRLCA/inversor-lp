@@ -631,41 +631,42 @@
 
   function bloqueAuto(sel) {
     const base = new URL("compra/", location.href).href.split("#")[0];
-    const fichero = `${base}${sel}-`;
-    const pasos = `<ol class="m-pasos">
-        <li><strong>Clave nueva en Trading 212</strong> (cuenta Invest): Settings → API (Beta) → generar clave. Permisos: <strong>solo «Orders: execute»</strong> (crear órdenes). Copia clave y secreto. Esta clave puede comprar <em>y vender</em>: guárdala solo en el atajo y bórrala en Trading 212 si pierdes el móvil.</li>
+    const fichero = `${base}${sel}.json`;
+    const pasos = `<p class="m-dim">Nombres de las acciones en inglés, como en tu iPhone. Para dar nombre a un resultado usa <strong>Set Variable</strong>; luego lo eliges por ese nombre en la barra de variables.</p>
+      <ol class="m-pasos">
+        <li><strong>Clave nueva en Trading 212</strong> (cuenta Invest): Settings → API (Beta) → generar clave. Permisos: <strong>solo «Orders: execute»</strong>. Copia clave y secreto. Esta clave puede comprar <em>y vender</em>: guárdala solo en el atajo y bórrala en Trading 212 si pierdes el móvil.</li>
         <li><strong>Atajo nuevo</strong> llamado <code>Vigia Compra</code>. Acciones, en este orden:
           <ol>
-            <li><strong>Number</strong>: tu importe mensual en euros para esta sección (por ejemplo <code>500</code>).</li>
-            <li><strong>Text</strong>: <code>CLAVE:SECRETO</code>.</li>
-            <li><strong>Base64 Encode</strong> (Line Breaks: <strong>None</strong>).</li>
-            <li><strong>Format Date</strong>: Current Date, Date Format <em>Custom</em>: <code>yyyy-MM</code>.</li>
-            <li><strong>Get Contents of URL</strong>: <code>${esc(fichero)}</code> + la burbuja <em>Formatted Date</em> + <code>.json</code> (Method GET, sin cabeceras).</li>
-            <li><strong>Get Dictionary Value</strong>: Value for <code>ordenes</code> in <em>Contents of URL</em>.</li>
-            <li><strong>Repeat with Each</strong> item in <em>Dictionary Value</em>. Dentro del bucle:
+            <li><strong>Number</strong>: tu importe del mes en euros para esta sección (por ejemplo <code>500</code>) → <strong>Set Variable</strong> <code>Importe</code>.</li>
+            <li><strong>Text</strong>: <code>CLAVE:SECRETO</code> → <strong>Base64 Encode</strong> (Line Breaks: <strong>None</strong>) → <strong>Set Variable</strong> <code>Clave</code>.</li>
+            <li><strong>Format Date</strong>: Current Date, Date Format <em>Custom</em> <code>yyyy-MM</code> → <strong>Set Variable</strong> <code>Mes</code>.</li>
+            <li><strong>¿Ya comprado este mes?</strong> <strong>Get File</strong> de la carpeta de Atajos, ruta <code>vigia-${esc(sel)}.txt</code>, con <em>Error If Not Found</em> <strong>apagado</strong> → <strong>Get Text from Input</strong> (<em>File</em>) → <strong>If</strong> <em>Text</em> <strong>contains</strong> <em>Mes</em> → <strong>Stop This Shortcut</strong> → <em>End If</em>.</li>
+            <li><strong>Get Contents of URL</strong>: <code>${esc(fichero)}</code> (Method GET) → <strong>Set Variable</strong> <code>Lista</code>. → <strong>Get Dictionary Value</strong> <code>mes</code> in <em>Lista</em> → <strong>If</strong> <em>Dictionary Value</em> <strong>is not</strong> <em>Mes</em> → <strong>Stop This Shortcut</strong> → <em>End If</em>. (Si la lista de este mes aún no está publicada, no hace nada.)</li>
+            <li><strong>Get Dictionary Value</strong>: <code>ordenes</code> in <em>Lista</em> → <strong>Repeat with Each</strong>. Dentro del bucle:
               <ul>
-                <li><strong>Get Dictionary Value</strong>: Value for <code>por100</code> in <em>Repeat Item</em>.</li>
-                <li><strong>Calculate Expression</strong>: <em>Dictionary Value</em> × <em>Number</em> ÷ 100.</li>
-                <li><strong>Round Number</strong>: <em>Calculation Result</em> to <strong>Hundredths</strong>, mode <strong>Always Round Down</strong>.</li>
-                <li><strong>Get Dictionary Value</strong>: Value for <code>ticker</code> in <em>Repeat Item</em>.</li>
-                <li><strong>Get Contents of URL</strong>: <code>${esc(URL_ORDENES)}</code>. Method <strong>POST</strong>. Headers: <code>Authorization</code> = <code>Basic </code> + <em>Base64 Encoded</em>. Request Body: <strong>JSON</strong> con dos campos: <code>ticker</code> (Text) = la burbuja <em>Dictionary Value</em> del paso anterior; <code>quantity</code> (Number) = <em>Rounded Number</em>.</li>
-                <li><strong>Add to Variable</strong>: <em>Contents of URL</em> → variable <code>Resultado</code>.</li>
+                <li><strong>Get Dictionary Value</strong> <code>por100</code> in <em>Repeat Item</em> → <strong>Calculate Expression</strong>: <em>Dictionary Value</em> × <em>Importe</em> ÷ 100 → <strong>Round Number</strong> to <strong>Thousandths</strong>, <strong>Always Round Down</strong> → <strong>Set Variable</strong> <code>Cantidad</code>.</li>
+                <li><strong>Get Dictionary Value</strong> <code>ticker</code> in <em>Repeat Item</em> → <strong>Set Variable</strong> <code>Ticker</code>.</li>
+                <li><strong>Get Contents of URL</strong>: <code>${esc(URL_ORDENES)}</code>. Method <strong>POST</strong>. Header <code>Authorization</code> = <code>Basic </code> + <em>Clave</em>. Request Body <strong>JSON</strong> con dos campos: <code>ticker</code> (Text) = <em>Ticker</em>; <code>quantity</code> (Number) = <em>Cantidad</em>.</li>
+                <li><strong>Get Dictionary Value</strong> <code>id</code> in <em>Contents of URL</em> → <strong>If</strong> <em>Dictionary Value</em> <strong>has any value</strong> → <strong>Add to Variable</strong> <code>Compradas</code>: <em>Ticker</em> → <em>Otherwise</em> → <strong>Add to Variable</strong> <code>Fallos</code>: <em>Ticker</em> y <em>Contents of URL</em> → <em>End If</em>.</li>
               </ul></li>
-            <li>(después de End Repeat) <strong>Show Notification</strong>: «Vigía: compra del mes enviada» con <em>Resultado</em>.</li>
+            <li>Después de <em>End Repeat</em>: <strong>If</strong> <em>Compradas</em> <strong>has any value</strong> → <strong>Save File</strong>: <em>Mes</em> en la carpeta de Atajos, ruta <code>vigia-${esc(sel)}.txt</code>, <em>Overwrite</em> encendido, <em>Ask Where to Save</em> apagado → <em>End If</em>. (Así no vuelve a comprar este mes.)</li>
+            <li><strong>Show Notification</strong>: «Vigía: compradas <em>Compradas</em>. Fallos: <em>Fallos</em>».</li>
           </ol></li>
-        <li><strong>Pruébalo primero en modo práctica</strong>: en Trading 212 cambia a la cuenta Practice, crea allí una clave y en el paso de la orden usa <code>https://demo.trading212.com/api/v0/equity/orders/market</code>. Cuando salga bien, cambia a la clave real y a <code>live</code>.</li>
-        <li><strong>Automatización</strong>: Shortcuts → Automation → «+» → <em>Time of Day</em> → Monthly, el día <strong>2</strong>, a una hora con la bolsa de EE. UU. abierta (entre las 16:00 y las 21:30 hora de España) → <strong>Run Immediately</strong> → atajo <em>Vigia Compra</em>.</li>
-        <li><strong>Dinero</strong>: programa en tu banco una transferencia mensual a Trading 212 que llegue antes del día 2.</li>
+        <li><strong>Pruébalo primero en la cuenta Practice</strong>: crea allí otra clave y, en el paso de la orden, usa <code>https://demo.trading212.com/api/v0/equity/orders/market</code>. Cuando salga bien, pon la clave real, vuelve a <code>live</code> y borra el fichero <code>vigia-${esc(sel)}.txt</code> de la prueba (app Archivos → iCloud Drive → Shortcuts).</li>
+        <li><strong>Automatización</strong>: Shortcuts → Automation → «+» → <em>Time of Day</em>, <strong>18:30</strong>, <strong>Daily</strong> → <strong>Run Immediately</strong> (y <em>Notify When Run</em> apagado) → atajo <em>Vigia Compra</em>. Cada día comprueba si hay lista nueva; compra una sola vez al mes y el resto de días no hace nada.</li>
+        <li><strong>Dinero</strong>: programa en tu banco una transferencia mensual a Trading 212 que llegue antes del día 1, y deja ahí como saldo libre solo el dinero del mes.</li>
       </ol>
-      <p class="m-dim">Solo compra: nunca vende nada de lo que ya tienes. Si el informe de un mes no se genera, no existe la lista de ese mes y el atajo se para sin comprar. Una sección en pausa publica una lista vacía. Las empresas que Trading 212 no tiene se quitan y su parte se reparte entre las demás. Tu clave y tu importe viven solo en el atajo.</p>`;
+      <p class="m-dim"><strong>Cuándo se publica la lista:</strong> el primer día de bolsa de EE. UU. de cada mes, a las 15:07 UTC (16:07 en España en invierno, 17:07 en verano), con los precios de ese momento. Con el atajo a las 18:30 de España compra entre 1 y 2 horas después, con la bolsa abierta. Si estás de viaje y el atajo salta con la bolsa cerrada, Trading 212 deja la orden pendiente hasta que abra.</p>
+      <p class="m-dim"><strong>Euros y dólares:</strong> tú pagas en euros y Trading 212 convierte solo (comisión de cambio del 0,15 %). Pero su API solo acepta órdenes en número de acciones, no en euros, así que Vigía calcula cuántas acciones son cada 100 € con el precio en dólares y el cambio del BCE. Se gasta el 98 % del importe: el 2 % que queda cubre subidas de precio y la comisión.</p>
+      <p class="m-dim">Solo compra: nunca vende nada de lo que ya tienes. Si el informe de un mes no se genera, no hay lista y no compra nada. Una sección en pausa publica una lista vacía. Las empresas que Trading 212 no tiene se quitan y su parte se reparte entre las demás. Tu clave y tu importe viven solo en el atajo.</p>`;
     return `<details class="m-t212" data-k="auto" ${abiertos.has("auto") ? "open" : ""}>
       <summary><strong>Compra automática cada mes</strong> <span class="m-dim">(iPhone + Trading 212)</span></summary>
-      <p class="m-dim">El día 1 Vigía publica la lista de la compra de esta sección; el día 2 tu iPhone la compra sola en Trading 212, en acciones sueltas. Lista de este mes: <a href="${esc(urlCompra(sel, informe.mes))}" target="_blank" rel="noopener">${esc(sel)}-${esc(informe.mes)}.json</a>.</p>
+      <p class="m-dim">El primer día de bolsa del mes Vigía publica la lista de la compra de esta sección con los precios del momento, y tu iPhone la compra sola en Trading 212, en acciones sueltas. Lista de este mes: <a href="${esc(urlCompra(sel, informe.mes))}" target="_blank" rel="noopener">${esc(sel)}-${esc(informe.mes)}.json</a>.</p>
       <div class="m-acciones">
         <label class="m-campo">Importe del atajo (€)<input id="m-auto-imp" type="number" inputmode="decimal" min="0" step="1" value="${esc(cfg.autoImporte || "")}" placeholder="500"></label>
         <button class="m-btn" data-accion="autoapuntar">Apuntar la compra automática en mi cartera</button>
       </div>
-      <p class="m-nota">Después de cada compra automática, abre Vigía y pulsa «Apuntar»: calcula exactamente las mismas acciones que el atajo (al precio del informe) para que tus topes y el seguimiento cuadren. Quita después las que Trading 212 no haya podido comprar.</p>
+      <p class="m-nota">Después de cada compra automática, abre Vigía y pulsa «Apuntar»: calcula exactamente las mismas acciones que el atajo (al precio de la lista) para que tus topes y el seguimiento cuadren. Quita después las que Trading 212 no haya podido comprar.</p>
       <details class="m-det" data-k="auto-config" ${abiertos.has("auto-config") ? "open" : ""}><summary>Preparar el atajo y la automatización (una vez)</summary>${pasos}</details>
     </details>`;
   }
@@ -683,8 +684,8 @@
     }
     const nuevas = M.comprasAuto(doc, imp, M.hoyISO(), sel).map((o) => M.normalizarOperacion(o).op).filter(Boolean);
     if (!nuevas.length) { aviso = "La lista de este mes está vacía: no hay nada que apuntar."; pintar(); return; }
-    const txt = nuevas.map((o) => `${o.ticker}: ${num(o.acciones, 2)} acc. × ${num(o.precio)} $`).join("\n");
-    if (!window.confirm(`Se apuntarán ${nuevas.length} compras (las de ${imp} € del atajo), al precio del informe:\n\n${txt}\n\n¿Seguir?`)) return;
+    const txt = nuevas.map((o) => `${o.ticker}: ${num(o.acciones, 3)} acc. × ${num(o.precio)} $`).join("\n");
+    if (!window.confirm(`Se apuntarán ${nuevas.length} compras (las de ${imp} € del atajo), al precio de la lista:\n\n${txt}\n\n¿Seguir?`)) return;
     ops = [...ops, ...nuevas]; guardar(CLAVE_OPS, ops);
     aviso = `Apuntadas ${nuevas.length} compras automáticas (${nuevas.map((o) => o.ticker).join(", ")}).`;
     pintar(); window.scrollTo({ top: 0, behavior: "smooth" });
