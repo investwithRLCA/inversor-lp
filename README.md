@@ -353,24 +353,38 @@ su API como «deprecated» (sin más mejoras); si algún día dejan de funcionar
 error. Lógica pura y probada en `docs/mensual.js` (`pesosTarta`, `cuerpoTarta`, `enlaceAtajoT212`,
 `comprasDeTarta`).
 
-### Compra automática cada mes (atajo «Vigia Compra»)
+### Inversión automática cada mes (Trading 212 + iPhone)
 
-El workflow «Compra del mes» (`.github/workflows/compra.yml`) publica la lista de la compra **una vez al mes**:
-el primer día de bolsa de EE. UU. del mes, a las 15:07 UTC (bolsa abierta en verano y en invierno), con precios
-de ese momento (Finnhub; si uno se aleja más de un 35 % del informe se usa el del informe) y el cambio euro/dólar
-del BCE. Escribe `docs/compra/<sección>-<AAAA-MM>.json` (archivo) y `docs/compra/<sección>.json` (la última).
-Las empresas de `backend/mensual/t212_no_disponibles.txt` se quitan. No se genera si el último informe no es
-del mes en curso, si la bolsa está cerrada o si la lista del mes ya existe (a mano, «forzar» solo para pruebas).
+**Qué decides tú, en Vigía** («Este mes» → tarjeta «Inversión automática»): el importe habitual de cada
+mes, el importe de un mes concreto (0 = ese mes no se compra), el reparto entre secciones (%) y la cuenta
+(real o Practice). «Guardar en el iPhone» se lo pasa al script del iPhone junto con lo que ya tienes en
+cartera. Todo eso vive solo en tu móvil: nunca pasa por GitHub ni por Supabase.
+
+**Qué publica Vigía** (workflow «Compra del mes», `.github/workflows/compra.yml`): una vez al mes, el primer
+día de bolsa de EE. UU., a las 15:07 UTC (bolsa abierta en verano y en invierno), `docs/compra/lista.json`
+(y el archivo `lista-AAAA-MM.json`): las empresas de cada sección con su ticker de Trading 212 y su precio de
+ese momento (Finnhub; si uno se aleja más de un 35 % del informe se usa el del informe), el cambio euro/dólar
+del BCE y el tope por empresa. Sin importes. Se quitan las de `backend/mensual/t212_no_disponibles.txt`. Si
+Finnhub no responde, decide por el horario. Nunca sustituye una lista real ya publicada; a mano, «forzar»
+crea una lista de PRUEBA que solo se compra en la cuenta Practice.
+
+**Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable, lanzado cada día a las 18:30 por una
+automatización de Atajos): si este mes aún no compró y la lista es de este mes, reparte tu importe entre
+secciones (tus %) y empresas con la MISMA regla que «Este mes» (`planCompra`: a partes iguales, sin pasar del
+tope por empresa contando lo que ya tienes; una sección en pausa no se invierte) y lanza una orden de compra a
+mercado por empresa. **Solo compra: nunca vende.** Gasta el 98 % (margen para subidas y la comisión de cambio),
+acciones con 3 decimales, nada por debajo de 1 €. La clave de Trading 212 está en el llavero del iPhone.
+Salvaguardas: una sola compra por mes y cuenta (la marca se guarda antes de enviar; si algo se corta, no
+repite), candado contra ejecuciones simultáneas, corta si Trading 212 rechaza la clave (y reintenta otro día),
+reintenta una vez si pide esperar, no repite una orden sin respuesta, avisa si el día 5 aún no hay lista, pide
+confirmación para cualquier cambio o compra lanzada a mano. Al terminar avisa; tocando el aviso copia la compra
+y en Vigía «Pegar compra del iPhone» la apunta en la cartera (sin duplicar; las de prueba no se apuntan).
 
 Por qué hay dólares: tú pagas en euros y Trading 212 convierte solo, pero su API solo admite órdenes en número
-de acciones, así que «por100» (acciones por cada 100 €) se calcula con el precio en dólares y el cambio. Se gasta
-el 98 % del importe (margen para subidas de precio y la comisión de cambio) y se redondea hacia abajo a 3 decimales.
+de acciones, así que el iPhone calcula cuántas son con el precio en dólares y el cambio.
 
-El atajo del iPhone, con una automatización diaria a las 18:30, mira si ya compró este mes (un fichero suyo en
-iCloud) y si la última lista es de este mes; si toca, multiplica por tu importe (que vive solo en el atajo) y lanza
-una orden de compra a mercado por empresa; con la bolsa cerrada, Trading 212 la deja pendiente hasta que abre.
-**Solo compra: nunca vende.** En Vigía, «Apuntar la compra automática» registra en tu cartera local exactamente
-las mismas acciones. Pasos de montaje en el propio bloque de «Este mes».
+`planCompra` (y `repartir`) está copiada tal cual en el script: `python -m mensual.sincronizar_script_iphone`
+(desde `backend/`) la vuelve a copiar si cambia, y las pruebas comprueban que las dos copias son idénticas.
 
 ### Ficheros
 

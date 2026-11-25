@@ -1,9 +1,10 @@
 name: Compra del mes (lista para el atajo del iPhone)
 
-# Publica UNA vez al mes la lista de la compra de cada sección en docs/compra/
-# (empresas, ticker de Trading 212, peso y acciones por cada 100 €), con los precios
-# de ese momento. La lee el atajo «Vigia Compra» del iPhone, que compra en Trading 212
-# con el importe que vive solo en el atajo. Solo compra: nunca vende.
+# Publica UNA vez al mes la lista de la compra en docs/compra/lista.json (empresas de
+# cada sección con su ticker de Trading 212 y su precio de ese momento, cambio euro/dólar
+# y tope por empresa). La lee el script «Vigia Compra» del iPhone (app Scriptable), que
+# reparte tu importe del mes —decidido en Vigía y guardado solo en tu iPhone— con la misma
+# regla que Vigía y compra en Trading 212. Solo compra: nunca vende.
 #
 # Cuándo: el primer día de bolsa de EE. UU. de cada mes, a las 15:07 UTC (16:07 en
 # España en invierno, 17:07 en verano), con la bolsa abierta en verano y en invierno.
@@ -12,8 +13,9 @@ name: Compra del mes (lista para el atajo del iPhone)
 # (No se filtra por día de la semana en el cron: con día del mes y día de la semana
 # a la vez, cron ejecuta si se cumple CUALQUIERA de los dos.)
 #
-# A mano («Run workflow»): con «forzar» genera la lista ya, aunque la bolsa esté
-# cerrada o ya exista (solo para probar en la cuenta Practice).
+# A mano («Run workflow»): con «forzar» genera ya una lista de PRUEBA aunque la bolsa
+# esté cerrada. Va marcada "prueba": el iPhone solo la compra en la cuenta Practice,
+# nunca con dinero real, y nunca sustituye a la lista real del mes si ya existe.
 #
 # Solo datos públicos de empresas: nada de tu cartera ni de tu importe.
 
@@ -23,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       forzar:
-        description: "Generar ya aunque la bolsa esté cerrada o la lista del mes ya exista (solo pruebas)"
+        description: "Generar ya una lista de PRUEBA (solo se compra en la cuenta Practice)"
         type: boolean
         required: false
         default: false

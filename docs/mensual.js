@@ -431,15 +431,116 @@
     return out;
   }
 
-  /** Operaciones que corresponden a la compra automática del atajo: mismas acciones que él
-   *  (por100 × importe € / 100, redondeado hacia abajo a 3 decimales), al precio de la lista. */
-  function comprasAuto(doc, importeEur, fecha, paq) {
-    const out = [];
-    ((doc && doc.ordenes) || []).forEach((o) => {
-      const acciones = Math.floor(Number(o.por100) * Number(importeEur) / 100 * 1000 + 1e-9) / 1000;
-      if (acciones > 0 && o.precio_usd > 0) out.push({ tipo: "compra", ticker: o.empresa, acciones, precio: o.precio_usd, comision: 0, fecha, paq });
+  // ───────────────────── compra automática mensual (script «Vigia Compra» del iPhone) ─────────────────────
+  // Vigía decide CUÁNTO (total del mes, con cambios para meses concretos) y CÓMO se reparte entre
+  // secciones; el iPhone, con la lista pública del mes, reparte entre empresas con la MISMA regla
+  // que «Este mes» (repartir: a partes iguales sin pasar del tope por empresa contando lo que ya
+  // tienes) y compra. planCompra está copiada tal cual en docs/vigia-compra.js; una prueba
+  // automática comprueba que las dos dan siempre el mismo resultado.
+
+  const MIN_ORDEN_EUR = 1;           // órdenes más pequeñas no se envían (Trading 212 las rechaza)
+  const MAX_IMPORTE_MES = 100000;    // salvaguarda: importe mensual máximo admitido
+
+  const mesSiguiente = (mes, n = 1) => {
+    const [a, m] = String(mes).split("-").map(Number);
+    const d = new Date(Date.UTC(a, m - 1 + n, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  };
+  const mesDe = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
+  /** Importe (€) que toca invertir en `mes`: el del mes concreto si lo hay; si no, el habitual. */
+  function importeDelMes(auto, mes) {
+    const m = (auto && auto.meses) || {};
+    const v = Object.prototype.hasOwnProperty.call(m, mes) ? Number(m[mes]) : Number(auto && auto.total);
+    return isFinite(v) && v > 0 ? Math.min(v, MAX_IMPORTE_MES) : 0;
+  }
+
+  /** Reparto entre secciones normalizado a 1 (solo las claves dadas, sin negativos). */
+  function normalizarReparto(reparto, claves) {
+    const out = {};
+    let suma = 0;
+    (claves || Object.keys(reparto || {})).forEach((k) => {
+      const v = Number((reparto || {})[k]);
+      if (isFinite(v) && v > 0) { out[k] = v; suma += v; }
     });
+    if (!(suma > 0)) return {};
+    Object.keys(out).forEach((k) => (out[k] = out[k] / suma));
     return out;
+  }
+
+  /** Plan de compra del mes: cuántas acciones de cada empresa, sección por sección.
+   *  lista: la pública del mes (docs/compra/lista.json). conf: la del iPhone
+   *  {total, meses, reparto, posiciones (valor en $ por empresa), fuera}. */
+  function planCompra(lista, conf, mes) {
+    const importe = importeDelMes(conf, mes);
+    const secs = (lista && lista.secciones) || {};
+    const reparto = normalizarReparto(conf && conf.reparto);
+    const fx = Number(lista && lista.eurusd), margen = Number((lista && lista.margen) || 0.98);
+    const tope = Number((lista && lista.tope_posicion) || TOPE_POSICION);
+    const fuera = new Set(((conf && conf.fuera) || []).map((t) => String(t).toUpperCase()));
+    const valorPos = {};
+    Object.entries((conf && conf.posiciones) || {}).forEach(([k, v]) => { if (Number(v) > 0) valorPos[k] = Number(v); });
+    const ordenes = [], secciones = {};
+    let sinInvertir = 0;
+    if (!(importe > 0) || !(fx > 0)) return { importe, ordenes, secciones, sinInvertir: importe, gastoEur: 0 };
+    Object.keys(reparto).forEach((k) => {
+      const eur = importe * reparto[k];
+      const disponibles = ((secs[k] && secs[k].ordenes) || []).filter((o) => !fuera.has(String(o.empresa).toUpperCase()) && Number(o.precio_usd) > 0);
+      const info = { eur, pausada: !!(secs[k] && secs[k].pausada), sinLista: !secs[k], ordenes: [], sobranteEur: 0 };
+      secciones[k] = info;
+      if (!disponibles.length) { info.sobranteEur = eur; sinInvertir += eur; return; }
+      const usd = eur * fx * margen;
+      const r = repartir(usd, disponibles.map((o) => o.empresa), valorPos, tope);
+      let gastado = 0;
+      disponibles.forEach((o) => {
+        const dolares = r.compras[o.empresa] || 0;
+        const q = Math.floor((dolares / Number(o.precio_usd)) * 1000 + 1e-9) / 1000;
+        const usdOrden = q * Number(o.precio_usd);
+        if (!(q > 0) || usdOrden / fx < MIN_ORDEN_EUR) return;
+        const ord = { seccion: k, empresa: o.empresa, ticker: o.ticker, cantidad: q, precio_usd: Number(o.precio_usd),
+                      usd: Math.round(usdOrden * 100) / 100, eur: Math.round((usdOrden / fx) * 100) / 100 };
+        info.ordenes.push(ord); ordenes.push(ord);
+        valorPos[o.empresa] = (valorPos[o.empresa] || 0) + usdOrden;
+        gastado += usdOrden / fx;
+      });
+      info.sobranteEur = Math.max(0, eur - gastado);
+      sinInvertir += info.sobranteEur;
+    });
+    const gastoEur = ordenes.reduce((s, o) => s + o.eur, 0);
+    return { importe, ordenes, secciones, sinInvertir, gastoEur };
+  }
+
+  /** UTF-8 JSON ⇄ base64url (para pasar datos a Scriptable por URL y de vuelta por el portapapeles). */
+  function aB64url(obj) {
+    const bytes = new TextEncoder().encode(JSON.stringify(obj));
+    let bin = ""; bytes.forEach((b) => (bin += String.fromCharCode(b)));
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function deB64url(txt) {
+    const s = String(txt || "").trim().replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(s + "===".slice((s.length + 3) % 4));
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  }
+
+  const PREFIJO_COMPRA = "VIGIA-COMPRA1:";
+
+  /** Lee lo que el iPhone copia tras comprar («VIGIA-COMPRA1:…») → {id, mes, entorno, compras}. */
+  function leerCompraIphone(texto) {
+    const t = String(texto || "").trim();
+    const i = t.indexOf(PREFIJO_COMPRA);
+    if (i < 0) return null;
+    let d;
+    try { d = deB64url(t.slice(i + PREFIJO_COMPRA.length).split(/\s/)[0]); } catch (e) { return null; }
+    if (!d || typeof d.id !== "string" || !/^\d{4}-\d{2}$/.test(d.mes || "") || !Array.isArray(d.compras)) return null;
+    const compras = d.compras.filter((c) => c && typeof c.t === "string" && Number(c.q) > 0 && Number(c.p) > 0 && typeof c.s === "string");
+    return { id: d.id, mes: d.mes, entorno: d.entorno === "demo" ? "demo" : "live", fecha: /^\d{4}-\d{2}-\d{2}$/.test(d.fecha || "") ? d.fecha : null, compras };
+  }
+
+  /** Operaciones de la cartera a partir de la compra del iPhone. */
+  function opsDeCompraIphone(compra, fechaDefecto) {
+    return (compra.compras || []).map((c) => ({ tipo: "compra", ticker: String(c.t).toUpperCase(), acciones: Number(c.q),
+      precio: Number(c.p), comision: 0, fecha: compra.fecha || fechaDefecto, paq: c.s }));
   }
 
   const API = {
@@ -447,7 +548,8 @@
     ms, iso, hoyISO, sumarDias, mesesEntre,
     normalizarOperacion, calcular, valorar, revisar, resumenPorPaquete, impuestoSiVende,
     avisosDosMeses, avisosVentaConPerdida, repartir, xirr, precioSpy, marcador,
-    tickerT212, pesosTarta, cuerpoTarta, enlaceAtajoT212, comprasDeTarta, comprasAuto,
+    tickerT212, pesosTarta, cuerpoTarta, enlaceAtajoT212, comprasDeTarta,
+    MIN_ORDEN_EUR, MAX_IMPORTE_MES, PREFIJO_COMPRA, mesSiguiente, mesDe, importeDelMes, normalizarReparto, planCompra, aB64url, deB64url, leerCompraIphone, opsDeCompraIphone,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = API;
   else raiz.Mensual = API;
