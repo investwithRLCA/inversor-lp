@@ -1,0 +1,2 @@
+# Tickers que Trading 212 no tiene (uno por línea). La compra automática los quita y reparte su peso.
+WKC

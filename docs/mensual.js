@@ -431,12 +431,23 @@
     return out;
   }
 
+  /** Operaciones que corresponden a la compra automática del atajo: mismas acciones que él
+   *  (por100 × importe € / 100, redondeado hacia abajo a centésimas), al precio del informe. */
+  function comprasAuto(doc, importeEur, fecha, paq) {
+    const out = [];
+    ((doc && doc.ordenes) || []).forEach((o) => {
+      const acciones = Math.floor(Number(o.por100) * Number(importeEur) / 100 * 100 + 1e-9) / 100;
+      if (acciones > 0 && o.precio_usd > 0) out.push({ tipo: "compra", ticker: o.empresa, acciones, precio: o.precio_usd, comision: 0, fecha, paq });
+    });
+    return out;
+  }
+
   const API = {
     TOPE_POSICION, MESES_REVISION, TESIS_ANTIGUA_DIAS, PAQUETES, NOMBRE_ATAJO_T212,
     ms, iso, hoyISO, sumarDias, mesesEntre,
     normalizarOperacion, calcular, valorar, revisar, resumenPorPaquete, impuestoSiVende,
     avisosDosMeses, avisosVentaConPerdida, repartir, xirr, precioSpy, marcador,
-    tickerT212, pesosTarta, cuerpoTarta, enlaceAtajoT212, comprasDeTarta,
+    tickerT212, pesosTarta, cuerpoTarta, enlaceAtajoT212, comprasDeTarta, comprasAuto,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = API;
   else raiz.Mensual = API;

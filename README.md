@@ -353,6 +353,16 @@ su API como «deprecated» (sin más mejoras); si algún día dejan de funcionar
 error. Lógica pura y probada en `docs/mensual.js` (`pesosTarta`, `cuerpoTarta`, `enlaceAtajoT212`,
 `comprasDeTarta`).
 
+### Compra automática cada mes (atajo «Vigia Compra»)
+
+Tras el informe del día 1, `backend/mensual/compra_t212.py` publica en `docs/compra/<sección>-<AAAA-MM>.json`
+la lista de la compra de cada sección: empresas, ticker de Trading 212, peso y acciones por cada 100 €
+(con el cambio euro/dólar del BCE). Las de `backend/mensual/t212_no_disponibles.txt` se quitan. Un atajo
+del iPhone, lanzado por una automatización mensual, lee la lista del mes en curso, multiplica por tu importe
+(que vive solo en el atajo) y lanza una orden de compra a mercado por empresa. **Solo compra: nunca vende.**
+Si no hay informe ese mes, no hay lista y no compra nada. En Vigía, «Apuntar la compra automática» registra
+en tu cartera local exactamente las mismas acciones. Pasos de montaje en el propio bloque de «Este mes».
+
 ### Ficheros
 
 | Fichero | Qué es |

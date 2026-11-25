@@ -344,7 +344,7 @@
       if (reparto.sobrante > 0.005) {
         h += `<div class="m-aviso">${usd(reparto.sobrante)} no caben por los topes (máx. ${pct(inf.parametros.tope_posicion)} por empresa): guárdalos para el mes que viene, no los fuerces.</div>`;
       }
-      if (!retirado(sel)) h += bloqueT212(sel, P, cands, reparto, hayImporte);
+      if (!retirado(sel)) h += bloqueT212(sel, P, cands, reparto, hayImporte) + bloqueAuto(sel);
     }
 
     const otras = [].concat((P.vetadas || []).map((v) => `<li><strong>${esc(v.ticker)}</strong> (frenada): ${esc(v.motivo)}</li>`),
@@ -618,9 +618,76 @@
     const fic = document.getElementById("m-importar");
     if (fic) fic.addEventListener("change", onImportar);
     $m.querySelectorAll("[data-accion]").forEach((b) => b.addEventListener("click", onAccion));
+    const autoImp = document.getElementById("m-auto-imp");
+    if (autoImp) autoImp.addEventListener("change", (e) => { cfg.autoImporte = e.target.value; guardar(CLAVE_CFG, cfg); });
     const div = document.getElementById("m-t212-div");
     if (div) div.addEventListener("change", (e) => { cfg.t212Div = e.target.value; guardar(CLAVE_CFG, cfg); pintar(); });
     $m.querySelectorAll("details[data-k]").forEach((d) => d.addEventListener("toggle", () => (d.open ? abiertos.add(d.dataset.k) : abiertos.delete(d.dataset.k))));
+  }
+
+  // ───────────── compra automática cada mes (atajo «Vigia Compra» del iPhone) ─────────────
+  const URL_ORDENES = "https://live.trading212.com/api/v0/equity/orders/market";
+  const urlCompra = (sel, mes) => new URL(`compra/${sel}-${mes}.json`, location.href).href.split("#")[0];
+
+  function bloqueAuto(sel) {
+    const base = new URL("compra/", location.href).href.split("#")[0];
+    const fichero = `${base}${sel}-`;
+    const pasos = `<ol class="m-pasos">
+        <li><strong>Clave nueva en Trading 212</strong> (cuenta Invest): Settings → API (Beta) → generar clave. Permisos: <strong>solo «Orders: execute»</strong> (crear órdenes). Copia clave y secreto. Esta clave puede comprar <em>y vender</em>: guárdala solo en el atajo y bórrala en Trading 212 si pierdes el móvil.</li>
+        <li><strong>Atajo nuevo</strong> llamado <code>Vigia Compra</code>. Acciones, en este orden:
+          <ol>
+            <li><strong>Number</strong>: tu importe mensual en euros para esta sección (por ejemplo <code>500</code>).</li>
+            <li><strong>Text</strong>: <code>CLAVE:SECRETO</code>.</li>
+            <li><strong>Base64 Encode</strong> (Line Breaks: <strong>None</strong>).</li>
+            <li><strong>Format Date</strong>: Current Date, Date Format <em>Custom</em>: <code>yyyy-MM</code>.</li>
+            <li><strong>Get Contents of URL</strong>: <code>${esc(fichero)}</code> + la burbuja <em>Formatted Date</em> + <code>.json</code> (Method GET, sin cabeceras).</li>
+            <li><strong>Get Dictionary Value</strong>: Value for <code>ordenes</code> in <em>Contents of URL</em>.</li>
+            <li><strong>Repeat with Each</strong> item in <em>Dictionary Value</em>. Dentro del bucle:
+              <ul>
+                <li><strong>Get Dictionary Value</strong>: Value for <code>por100</code> in <em>Repeat Item</em>.</li>
+                <li><strong>Calculate Expression</strong>: <em>Dictionary Value</em> × <em>Number</em> ÷ 100.</li>
+                <li><strong>Round Number</strong>: <em>Calculation Result</em> to <strong>Hundredths</strong>, mode <strong>Always Round Down</strong>.</li>
+                <li><strong>Get Dictionary Value</strong>: Value for <code>ticker</code> in <em>Repeat Item</em>.</li>
+                <li><strong>Get Contents of URL</strong>: <code>${esc(URL_ORDENES)}</code>. Method <strong>POST</strong>. Headers: <code>Authorization</code> = <code>Basic </code> + <em>Base64 Encoded</em>. Request Body: <strong>JSON</strong> con dos campos: <code>ticker</code> (Text) = la burbuja <em>Dictionary Value</em> del paso anterior; <code>quantity</code> (Number) = <em>Rounded Number</em>.</li>
+                <li><strong>Add to Variable</strong>: <em>Contents of URL</em> → variable <code>Resultado</code>.</li>
+              </ul></li>
+            <li>(después de End Repeat) <strong>Show Notification</strong>: «Vigía: compra del mes enviada» con <em>Resultado</em>.</li>
+          </ol></li>
+        <li><strong>Pruébalo primero en modo práctica</strong>: en Trading 212 cambia a la cuenta Practice, crea allí una clave y en el paso de la orden usa <code>https://demo.trading212.com/api/v0/equity/orders/market</code>. Cuando salga bien, cambia a la clave real y a <code>live</code>.</li>
+        <li><strong>Automatización</strong>: Shortcuts → Automation → «+» → <em>Time of Day</em> → Monthly, el día <strong>2</strong>, a una hora con la bolsa de EE. UU. abierta (entre las 16:00 y las 21:30 hora de España) → <strong>Run Immediately</strong> → atajo <em>Vigia Compra</em>.</li>
+        <li><strong>Dinero</strong>: programa en tu banco una transferencia mensual a Trading 212 que llegue antes del día 2.</li>
+      </ol>
+      <p class="m-dim">Solo compra: nunca vende nada de lo que ya tienes. Si el informe de un mes no se genera, no existe la lista de ese mes y el atajo se para sin comprar. Una sección en pausa publica una lista vacía. Las empresas que Trading 212 no tiene se quitan y su parte se reparte entre las demás. Tu clave y tu importe viven solo en el atajo.</p>`;
+    return `<details class="m-t212" data-k="auto" ${abiertos.has("auto") ? "open" : ""}>
+      <summary><strong>Compra automática cada mes</strong> <span class="m-dim">(iPhone + Trading 212)</span></summary>
+      <p class="m-dim">El día 1 Vigía publica la lista de la compra de esta sección; el día 2 tu iPhone la compra sola en Trading 212, en acciones sueltas. Lista de este mes: <a href="${esc(urlCompra(sel, informe.mes))}" target="_blank" rel="noopener">${esc(sel)}-${esc(informe.mes)}.json</a>.</p>
+      <div class="m-acciones">
+        <label class="m-campo">Importe del atajo (€)<input id="m-auto-imp" type="number" inputmode="decimal" min="0" step="1" value="${esc(cfg.autoImporte || "")}" placeholder="500"></label>
+        <button class="m-btn" data-accion="autoapuntar">Apuntar la compra automática en mi cartera</button>
+      </div>
+      <p class="m-nota">Después de cada compra automática, abre Vigía y pulsa «Apuntar»: calcula exactamente las mismas acciones que el atajo (al precio del informe) para que tus topes y el seguimiento cuadren. Quita después las que Trading 212 no haya podido comprar.</p>
+      <details class="m-det" data-k="auto-config" ${abiertos.has("auto-config") ? "open" : ""}><summary>Preparar el atajo y la automatización (una vez)</summary>${pasos}</details>
+    </details>`;
+  }
+
+  async function apuntarAuto() {
+    const sel = cfg.paquete, imp = parseFloat(String(cfg.autoImporte || "").replace(",", "."));
+    if (!(imp > 0)) { aviso = "Escribe primero el importe del atajo (€)."; pintar(); return; }
+    let doc;
+    try {
+      const r = await fetch(urlCompra(sel, informe.mes), { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      doc = await r.json();
+    } catch (e) {
+      aviso = `No encuentro la lista de la compra de ${informe.mes} para esta sección (se publica con el informe del día 1).`; pintar(); return;
+    }
+    const nuevas = M.comprasAuto(doc, imp, M.hoyISO(), sel).map((o) => M.normalizarOperacion(o).op).filter(Boolean);
+    if (!nuevas.length) { aviso = "La lista de este mes está vacía: no hay nada que apuntar."; pintar(); return; }
+    const txt = nuevas.map((o) => `${o.ticker}: ${num(o.acciones, 2)} acc. × ${num(o.precio)} $`).join("\n");
+    if (!window.confirm(`Se apuntarán ${nuevas.length} compras (las de ${imp} € del atajo), al precio del informe:\n\n${txt}\n\n¿Seguir?`)) return;
+    ops = [...ops, ...nuevas]; guardar(CLAVE_OPS, ops);
+    aviso = `Apuntadas ${nuevas.length} compras automáticas (${nuevas.map((o) => o.ticker).join(", ")}).`;
+    pintar(); window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   /** Apunta en la cartera las compras de la tarta (al precio del informe), tras confirmar. */
@@ -658,6 +725,7 @@
       return;
     }
     if (a === "t212apuntar") { apuntarTarta(); return; }
+    if (a === "autoapuntar") { apuntarAuto(); return; }
     if (a === "detalle" || a === "detallepos") {
       const k = b.dataset.k || ((a === "detalle" ? "c:" : "p:") + t);
       abiertos.has(k) ? abiertos.delete(k) : abiertos.add(k);
