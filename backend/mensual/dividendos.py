@@ -530,6 +530,7 @@ def generar_seccion(
     f_empresa=None,                # (ticker, precio) -> (Fundamentals, Metrics) | None
     reglas: ReglasDividendos | None = None,
     fuente: str = "",
+    t212=None,                     # trading212.Disponibilidad: las que no están no ocupan plaza
 ) -> dict:
     """`universo`: filas {ticker, nombre, sector}. `datos[ticker]` = {close, adj, div}
     (Series); debe incluir IWM como referencia."""
@@ -618,12 +619,22 @@ def generar_seccion(
             "avisos": avisos_tarjeta(an, emp, x["rend"], x["caida"], r),
         }
 
-    # selección con tope por sector
-    cand, espera, por_sector = [], [], {}
+    # selección con tope por sector; al final, ¿se puede comprar en Trading 212?
+    cand, espera, por_sector, no_t212 = [], [], {}, []
     for x in elegibles:
         sec = (x["fila"].get("sector") or "").strip() or "?"
         if len(cand) < r.n and por_sector.get(sec, 0) < r.n_max_sector:
-            cand.append(tarjeta(x))
+            tk = t212.ticker(x["fila"]["ticker"]) if t212 is not None else None
+            if t212 is not None and tk is None:
+                no_t212.append({"ticker": x["fila"]["ticker"], "nombre": x["fila"].get("nombre") or "",
+                                "sector": x["fila"].get("sector") or "", "precio": round(x["precio"], 2),
+                                "puntos": x["puntos"], "por_que": razones(x["an"], x["emp"], x["rend"], ref)[:2],
+                                "motivo": "no está en Trading 212"})
+                continue
+            t = tarjeta(x)
+            if tk:
+                t["t212"] = tk
+            cand.append(t)
             por_sector[sec] = por_sector.get(sec, 0) + 1
         elif len(espera) < 12:
             espera.append(tarjeta(x))
@@ -643,7 +654,7 @@ def generar_seccion(
                     "n_puerta_dividendo": n_base, "n_revisadas": len(revisar), "n_elegibles": len(elegibles)},
         "descartes": dict(sorted(motivos.items(), key=lambda kv: -kv[1])[:12]),
         "referencia": ref, "grupo": grupo,
-        "candidatas": cand, "en_espera": espera,
+        "candidatas": cand, "en_espera": espera, "no_t212": no_t212,
         "universo": sorted(x["fila"]["ticker"] for x in elegibles),
         "estado": estado,
         "avisos": avisos,
@@ -919,7 +930,7 @@ def fundamentos_sec():
 
 
 def generar(hoy: date | None = None, *, max_empresas: int = 0, reglas: ReglasDividendos | None = None,
-            con_sec: bool = True) -> dict:
+            con_sec: bool = True, t212=None) -> dict:
     """Todo el proceso con datos reales. Lanza excepción si Yahoo no responde."""
     hoy = hoy or date.today()
     universo, fuente = universo_russell2000()
@@ -935,7 +946,7 @@ def generar(hoy: date | None = None, *, max_empresas: int = 0, reglas: ReglasDiv
     if cobertura < 0.6:
         raise RuntimeError(f"Solo se descargó el {cobertura:.0%} de las empresas: resultado poco fiable.")
     return limpiar_json(generar_seccion(universo, datos, hoy, f_empresa=fundamentos_sec() if con_sec else None,
-                                        reglas=reglas, fuente=fuente))
+                                        reglas=reglas, fuente=fuente, t212=t212))
 
 
 # --------------------------------------------------------------------------- #

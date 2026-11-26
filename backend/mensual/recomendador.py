@@ -167,6 +167,14 @@ def _momento(acciones: pd.DataFrame) -> np.ndarray:
     return m
 
 
+def _ficha_no_t212(reg: dict) -> dict:
+    """Lo justo para enseñar una empresa buena que Trading 212 no tiene (no se invierte)."""
+    razones = reg.get("razones") or []
+    return {"ticker": reg["ticker"], "nombre": reg.get("nombre") or "", "sector": reg.get("sector") or "",
+            "veredicto": reg.get("veredicto"), "precio": reg.get("precio"), "puntos": reg.get("puntos"),
+            "por_que": razones[:2], "motivo": "no está en Trading 212"}
+
+
 def generar_informe(
     tesis: list[dict],
     precios: pd.DataFrame,
@@ -185,6 +193,7 @@ def generar_informe(
     validacion: dict | None = None,           # revalidación histórica (autocorreccion.json)
     autocorr_previo: dict | None = None,      # bloque «autocorreccion» del informe anterior
     autocorregir: bool = True,
+    t212=None,                                # trading212.Disponibilidad: qué se puede comprar en Trading 212
 ) -> dict:
     """Construye el informe mensual con sus tres paquetes.
 
@@ -275,6 +284,7 @@ def generar_informe(
         aceptadas: list[dict] = []
         vetadas: list[dict] = []
         en_espera: list[dict] = []
+        sin_t212 = no_t212.setdefault(paquete, [])
         cuenta_sector: dict[int, int] = {}
         tope_sector = reglas.n_max_sector if max_sector is None else max_sector
         for k in orden:
@@ -306,12 +316,22 @@ def generar_informe(
             if motivo:
                 vetadas.append({"ticker": reg["ticker"], "motivo": motivo})
                 continue
+            # Último paso del análisis: ¿se puede comprar en Trading 212? Si no, no ocupa plaza
+            # (la ocupa la siguiente mejor) y va a la lista «buenas, pero no están en Trading 212».
+            if t212 is not None:
+                tk = t212.ticker(reg["ticker"])
+                if tk is None:
+                    sin_t212.append(_ficha_no_t212(reg))
+                    continue
+                reg["t212"] = tk
             cuenta_sector[s_cod] = cuenta_sector.get(s_cod, 0) + 1
             aceptadas.append(reg)
         for reg in aceptadas:
             reg["peso"] = round(1.0 / len(aceptadas), 4)
             reg["avisos"] = _avisos_candidata(reg)
         return aceptadas, vetadas, en_espera
+
+    no_t212: dict[str, list[dict]] = {}
 
     # ===================== paquete CORTO: descuento con tesis ==================== #
     # Regla de precio SIN recorte (n_max y sector se aplican al recorrer, junto con los frenos)
@@ -472,6 +492,9 @@ def generar_informe(
         resultado["calidad_g"] = recorrer("calidad_g", [pos[c] for c in orden], reglas.n_de("calidad_g"),
                                           evals=ev_g, post=post_lynch, max_sector=reglas.sector_de("calidad_g"))
 
+    if t212 is not None and t212.aviso:
+        avisos.append(t212.aviso)
+
     if "corto" in activos and estado_ia["agotada"]:
         avisos.append(f"Se agotó el límite de {max_ia} análisis de IA: las últimas candidatas del "
                       "paquete corto van sin explicación de la IA.")
@@ -538,7 +561,8 @@ def generar_informe(
         info = pq.INFO[clave]
         return {"nombre": info["nombre"], "horizonte": info["horizonte"], "etiqueta": info["etiqueta"],
                 "descripcion": info["descripcion"], "criterios": pq.criterios(clave, reglas),
-                "n_aptas": n_aptas[clave], "candidatas": acept, "vetadas": vet, "en_espera": esp}
+                "n_aptas": n_aptas[clave], "candidatas": acept, "vetadas": vet, "en_espera": esp,
+                "no_t212": no_t212.get(clave, [])}
 
     informe = {
         "version": 2,
@@ -562,6 +586,7 @@ def generar_informe(
         "en_espera": corto[2],
         "paquetes": {c: paquete_json(c) for c in activos},
         "paquetes_activos": list(activos),
+        "t212": t212.resumen() if t212 is not None else {"comprobado": False, "fuente": "sin comprobar"},
         "empresas": empresas,
         # Control del seguimiento: todas las elegibles de este mes, a partes iguales.
         "universo": sorted(c for k, c in enumerate(cols) if con_senal[k]),
@@ -794,6 +819,24 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
                     A(f"- ⚠️ **{c['ticker']}**: {av}")
             A("")
 
+    # Buenas, pero no están en Trading 212: se avisan y NO se invierten (su plaza la ocupa la siguiente)
+    nombres_sec = {"lynch_p": "Pequeñas", "calidad_g": "Grandes", "lynch_g": "Grandes (Lynch)", "dividendos": "Dividendos"}
+    fuera = [(nombres_sec.get(k, k), x) for k in ("lynch_p", "calidad_g", "lynch_g", "corto", "medio", "largo")
+             for x in ((paq.get(k) or {}).get("no_t212") or [])]
+    fuera += [("Dividendos", x) for x in ((inf.get("dividendos") or {}).get("no_t212") or [])]
+    t2 = inf.get("t212") or {}
+    if fuera:
+        A("### 🚫 Buenas, pero no están en Trading 212\n")
+        A("Cumplen todos los criterios y habrían entrado, pero Trading 212 no las tiene: **no se invierten** "
+          "(ni en «Este mes», ni en la tarta, ni en la compra automática). Su plaza la ocupa la siguiente mejor.\n")
+        for sec, x in fuera:
+            por_que = "; ".join(x.get("por_que") or [])
+            A(f"- **{x['ticker']}** · {x.get('nombre') or ''} ({sec})" + (f": {por_que}" if por_que else ""))
+        A("")
+    if not t2.get("comprobado"):
+        A("> ⚠️ Este mes **no se ha podido comprobar** qué empresas están en Trading 212: alguna elegida podría "
+          "no estar (la compra automática la saltaría con un aviso).\n")
+
     seg = inf.get("seguimiento")
     if seg:
         A("### 🔎 ¿Están funcionando los paquetes? (seguimiento automático)\n")
@@ -1018,6 +1061,11 @@ def main() -> None:
     print(f"Descargando precios de {len(tickers)} tickers (incluye {len(extra)} de informes anteriores)...")
     precios = descargar(tickers)
 
+    from . import trading212
+    t212 = trading212.cargar()
+    print(f"Trading 212: {'comprobado' if t212.comprobado else 'SIN COMPROBAR'} · {t212.fuente}"
+          + (f" · {t212.aviso}" if t212.aviso else ""))
+
     hay_ia = (not args.sin_ia) and bool(os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEYS"))
     inf = generar_informe(
         universo, precios, Params(), date.today(),
@@ -1029,6 +1077,7 @@ def main() -> None:
         previos=previos,
         validacion=ac.leer(),
         autocorr_previo=((previos[-1].get("informe") or {}).get("autocorreccion") if previos else None),
+        t212=t212,
     )
 
     if not args.sin_dividendos:
@@ -1036,7 +1085,7 @@ def main() -> None:
         # informe sigue adelante: sólo se avisa.
         try:
             from . import dividendos as dv
-            inf["dividendos"] = dv.generar(date.today())
+            inf["dividendos"] = dv.generar(date.today(), t212=t212)
             dv.volcar_estado(inf)
             d = inf["dividendos"]
             print(f"\nDividendos: {d['resumen']} · elegidas {[c['ticker'] for c in d['candidatas']]}")
@@ -1065,6 +1114,10 @@ def main() -> None:
             print(f"    {clave:9} frenada   {v['ticker']:6} {v['motivo']}")
         for v in P.get("en_espera") or []:
             print(f"    {clave:9} en espera {v['ticker']:6} {v['motivo']}")
+        for v in P.get("no_t212") or []:
+            print(f"    {clave:9} BUENA, NO EN TRADING 212 {v['ticker']:6}")
+    for v in (inf.get("dividendos") or {}).get("no_t212") or []:
+        print(f"    dividendos BUENA, NO EN TRADING 212 {v['ticker']:6}")
     # Detalle de las elegidas (datos públicos de empresas): sirve para comprobar en el registro
     # de la ejecución que la SEC (último trimestre) y la IA han respondido de verdad.
     for clave, P in inf["paquetes"].items():

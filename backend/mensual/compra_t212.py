@@ -126,7 +126,8 @@ def ordenes_de(cands: list[dict], fuera: set[str], vivos: dict[str, float] | Non
             continue
         if not isinstance(p, (int, float)) or p <= 0:
             continue
-        out.append({"empresa": t, "ticker": ticker_t212(t),
+        # el ticker exacto que comprobó el informe en Trading 212 («t212»); si no lo trae, el deducido
+        out.append({"empresa": t, "ticker": str(c.get("t212") or ticker_t212(t)),
                     "precio_usd": round(precio_fiable(vivos.get(t), float(p)), 4)})
     return out, sorted(quitadas)
 
@@ -138,6 +139,7 @@ def lista_mes(inf: dict, fx: float, fuera: set[str], vivos: dict[str, float] | N
         ordenes, quitadas = ordenes_de(s["cands"], fuera, vivos)
         secs[clave] = {"ordenes": ordenes, "pausada": s["pausada"], "quitadas_no_en_trading212": quitadas}
     tope = ((inf.get("parametros") or {}).get("tope_posicion"))
+    t2 = inf.get("t212") or {}
     return {
         "v": VERSION_LISTA,
         "script_minimo": SCRIPT_MINIMO,
@@ -150,6 +152,7 @@ def lista_mes(inf: dict, fx: float, fuera: set[str], vivos: dict[str, float] | N
         "margen": MARGEN,
         "decimales": DECIMALES,
         "tope_posicion": float(tope) if isinstance(tope, (int, float)) and tope > 0 else 0.25,
+        "t212_comprobado": bool(t2.get("comprobado")),   # el informe comprobó que todas están en Trading 212
         "secciones": secs,
     }
 

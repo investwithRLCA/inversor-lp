@@ -102,6 +102,7 @@
       base.dividendos = { nombre: d.nombre, horizonte: d.horizonte, etiqueta: d.etiqueta || "Dividendos", descripcion: d.descripcion,
                           criterios: d.criterios || [], n_aptas: (d.resumen || {}).n_elegibles, candidatas: d.candidatas || [],
                           vetadas: [], en_espera: (d.en_espera || []).map((c) => ({ ticker: c.ticker, motivo: `${num(c.puntos, 0)} puntos; fuera del máximo o del tope por sector` })),
+                          no_t212: d.no_t212 || [],
                           esDividendos: true };
     }
     return base;
@@ -238,7 +239,9 @@
     const fuera = (cfg.t212Fuera || []).filter((t) => t in base);
     const pesos = M.pesosTarta(base, fuera);
     const nombre = `Vigía ${P.etiqueta || NOMBRE_PAQ[sel] || sel} ${mesCorto(informe.mes)}`;
-    const cuerpo = M.cuerpoTarta(nombre, pesos, cfg.t212Div);
+    const exactos = {};
+    cands.forEach((c) => { if (c.t212) exactos[c.ticker] = c.t212; });
+    const cuerpo = M.cuerpoTarta(nombre, pesos, cfg.t212Div, exactos);
     const total = Object.entries(base).filter(([t]) => pesos[t]).reduce((s, [, v]) => s + v, 0);
     return { pesos, cuerpo, nombre, enlace: M.enlaceAtajoT212(cuerpo), total, fuera: new Set(fuera) };
   }
@@ -252,7 +255,7 @@
       const casilla = tope ? "" : `<input type="checkbox" data-accion="t212fuera" data-t="${esc(c.ticker)}" ${quitada ? "" : "checked"} aria-label="Incluir ${esc(c.ticker)}">`;
       return `<tr><td><label class="m-check">${casilla}<strong>${esc(c.ticker)}</strong></label></td>
         <td class="num">${w ? pct(w, 1) : "—"}</td>
-        <td class="m-dim">${quitada ? "quitada" : tope ? "ya pesa el tope en tu cartera" : esc(M.tickerT212(c.ticker))}</td></tr>`;
+        <td class="m-dim">${quitada ? "quitada" : tope ? "ya pesa el tope en tu cartera" : esc(c.t212 || M.tickerT212(c.ticker))}</td></tr>`;
     }).join("");
     const pasos = `<p class="m-dim">Nombres de las acciones en inglés (como salen en un iPhone en inglés); en español, entre paréntesis.</p>
       <ol class="m-pasos">
@@ -396,7 +399,7 @@
     const paqs = paquetesDe(informe), secciones = {};
     seccionesAuto().forEach((k) => {
       secciones[k] = { pausada: false, ordenes: (paqs[k].candidatas || []).filter((c) => c.precio > 0)
-        .map((c) => ({ empresa: c.ticker, ticker: M.tickerT212(c.ticker), precio_usd: c.precio })) };
+        .map((c) => ({ empresa: c.ticker, ticker: c.t212 || M.tickerT212(c.ticker), precio_usd: c.precio })) };
     });
     return { lista: { mes, eurusd: (listaPublica && listaPublica.eurusd) || 1.08, margen: 0.98,
                       tope_posicion: informe.parametros ? informe.parametros.tope_posicion : 0.25, secciones }, orientativa: true };
@@ -560,6 +563,22 @@
     pintar(); window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  /** Buenas, pero no están en Trading 212: se enseñan y NO se invierten (el informe ya les quitó la plaza). */
+  function bloqueNoT212(P) {
+    const lista = (P && P.no_t212) || [];
+    if (!lista.length) return "";
+    const filas = lista.map((x) => `<li><strong>${esc(x.ticker)}</strong>${x.nombre ? ` · ${esc(x.nombre)}` : ""}${x.veredicto && x.veredicto !== "SIN_TESIS" ? ` <span class="pill v-${esc(x.veredicto)}">${esc(String(x.veredicto).replace("_", " "))}</span>` : ""}${(x.por_que || []).length ? `<br><span class="m-dim">${esc(x.por_que.join(" · "))}</span>` : ""}</li>`).join("");
+    return `<div class="m-no-t212"><strong>Buenas, pero no están en Trading 212 (${lista.length})</strong>
+      <p class="m-dim">Cumplen todo y habrían entrado, pero Trading 212 no las tiene: <strong>no se invierten</strong> (ni aquí, ni en la tarta, ni en la compra automática). Su plaza la ocupa la siguiente mejor.</p>
+      <ul>${filas}</ul></div>`;
+  }
+  /** Aviso si este mes el informe no pudo comprobar qué hay en Trading 212. */
+  function avisoT212() {
+    const t = informe && informe.t212;
+    if (!t || t.comprobado !== false) return "";
+    return `<div class="m-aviso">Este mes <strong>no se ha podido comprobar</strong> qué empresas están en Trading 212${t.aviso ? ` (${esc(t.aviso)})` : ""}. Alguna elegida podría no estar: la compra automática la saltaría con un aviso.</div>`;
+  }
+
   function seccionPaquetes() {
     const inf = informe;
     const paqs = paquetesDe(inf);
@@ -577,7 +596,7 @@
     }
     const totalTras = Object.values(valorPos).reduce((s, v) => s + v, 0) + Object.values(reparto.compras).reduce((s, v) => s + v, 0);
 
-    let h = `<h2>Este mes <span class="m-sub">${esc(inf.mes)} · precios a ${esc(fecha(inf.datos_a))}</span></h2>`;
+    let h = `<h2>Este mes <span class="m-sub">${esc(inf.mes)} · precios a ${esc(fecha(inf.datos_a))}</span></h2>` + avisoT212();
     (inf.avisos || []).forEach((a) => (h += `<div class="m-aviso">⚠️ ${esc(a)}</div>`));
     h += `<div class="m-paquetes" role="group" aria-label="Paquete de inversión">${claves.map((k) =>
       `<button class="m-paq" data-accion="paquete" data-paq="${k}" aria-pressed="${k === sel}">
@@ -615,6 +634,7 @@
       }
       if (!retirado(sel)) h += bloqueT212(sel, P, cands, reparto, hayImporte);
     }
+    h += bloqueNoT212(P);
 
     const otras = [].concat((P.vetadas || []).map((v) => `<li><strong>${esc(v.ticker)}</strong> (frenada): ${esc(v.motivo)}</li>`),
                             (P.en_espera || []).map((v) => `<li><strong>${esc(v.ticker)}</strong>: ${esc(v.motivo)}</li>`));

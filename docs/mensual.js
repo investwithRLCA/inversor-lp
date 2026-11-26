@@ -402,9 +402,10 @@
   }
 
   /** Cuerpo de la petición «crear tarta» de la API de Trading 212. */
-  function cuerpoTarta(nombre, pesos, dividendos) {
+  function cuerpoTarta(nombre, pesos, dividendos, exactos) {
+    // exactos: {ticker: ticker de Trading 212} que comprobó el informe; si falta, el deducido
     const reparto = {};
-    Object.entries(pesos).forEach(([t, w]) => (reparto[tickerT212(t)] = w));
+    Object.entries(pesos).forEach(([t, w]) => (reparto[(exactos && exactos[t]) || tickerT212(t)] = w));
     return {
       name: String(nombre || "Vigía").slice(0, 40),
       dividendCashAction: dividendos === "TO_ACCOUNT_CASH" ? "TO_ACCOUNT_CASH" : "REINVEST",

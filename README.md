@@ -353,6 +353,21 @@ su API como «deprecated» (sin más mejoras); si algún día dejan de funcionar
 error. Lógica pura y probada en `docs/mensual.js` (`pesosTarta`, `cuerpoTarta`, `enlaceAtajoT212`,
 `comprasDeTarta`).
 
+### ¿Está en Trading 212? (último paso del análisis mensual)
+
+Al final del informe mensual se comprueba cada empresa elegida contra el catálogo de Trading 212
+(`backend/mensual/trading212.py`, API `metadata/instruments`). Una empresa que lo cumple todo pero que
+Trading 212 no tiene **no ocupa plaza** (la ocupa la siguiente mejor) y pasa a la lista «Buenas, pero no
+están en Trading 212»: sale en el Issue y en «Este mes», pero no se invierte (ni a mano, ni en la tarta, ni
+en la compra automática). Las que sí están llevan su ticker exacto de Trading 212. `t212_no_disponibles.txt`
+bloquea además las que tú quieras, siempre.
+
+Necesita una clave de Trading 212 con **solo** el permiso «Metadata» (lee el catálogo; no ve tu cuenta ni
+puede operar), guardada en GitHub → Settings → Secrets and variables → Actions como `T212_METADATA_KEY` y
+`T212_METADATA_SECRET`. Para probarla: Actions → «Comprobar Trading 212». La última lista buena se guarda en
+`backend/mensual/t212_instrumentos.json` y se usa si un mes la API falla (hasta 60 días). Sin ninguna lista,
+el informe lo avisa y solo se quitan las de la lista a mano.
+
 ### Inversión automática cada mes (Trading 212 + iPhone)
 
 **Qué decides tú, en Vigía** («Este mes» → tarjeta «Inversión automática»): el importe habitual de cada

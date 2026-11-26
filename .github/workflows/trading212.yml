@@ -1,0 +1,56 @@
+name: Comprobar Trading 212 (lista de valores)
+
+# Comprueba la clave de solo lectura de Trading 212 y guarda la lista de valores que se
+# pueden comprar (backend/mensual/t212_instrumentos.json). El informe mensual la usa para
+# no invertir en empresas que Trading 212 no tiene (y avisarte de que son buenas).
+#
+# Antes, una vez: en Trading 212 (cuenta real, Invest) → Settings → API (Beta) → generar
+# una clave con SOLO el permiso «Metadata» (solo lee el catálogo; no ve tu cuenta ni puede
+# operar), y en GitHub → Settings → Secrets and variables → Actions → New repository
+# secret: T212_METADATA_KEY (la clave) y T212_METADATA_SECRET (el secreto).
+#
+# Lanzarlo: pestaña «Actions» → «Comprobar Trading 212» → «Run workflow». También se
+# consulta sola en cada informe mensual. Solo datos públicos del catálogo.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: trading212-lista
+  cancel-in-progress: false
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Consultar Trading 212
+        working-directory: backend
+        env:
+          T212_METADATA_KEY: ${{ secrets.T212_METADATA_KEY }}
+          T212_METADATA_SECRET: ${{ secrets.T212_METADATA_SECRET }}
+        run: python -m mensual.trading212
+
+      - name: Guardar la lista (solo si ha cambiado)
+        run: |
+          f=backend/mensual/t212_instrumentos.json
+          [ -f "$f" ] || { echo "Sin lista."; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$f"
+          if git diff --cached --quiet; then echo "Sin cambios."; exit 0; fi
+          git commit -m "Trading 212: lista de valores disponibles actualizada"
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
+            sleep 5
+          done
+          exit 1
