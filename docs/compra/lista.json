@@ -1,0 +1,199 @@
+{
+ "v": 2,
+ "script_minimo": 1,
+ "mes": "2026-11",
+ "prueba": true,
+ "datos_a": "2026-11-25",
+ "generado": "2026-11-26T01:46:40+00:00",
+ "precios_de": "2026-11-26 01:46 UTC (33 de 33 en vivo)",
+ "eurusd": 1.0935,
+ "margen": 0.98,
+ "decimales": 3,
+ "tope_posicion": 0.25,
+ "t212_comprobado": true,
+ "secciones": {
+  "lynch_p": {
+   "ordenes": [
+    {
+     "empresa": "YELP",
+     "ticker": "YELP_US_EQ",
+     "precio_usd": 19.22
+    },
+    {
+     "empresa": "LRN",
+     "ticker": "LRN_US_EQ",
+     "precio_usd": 79.9
+    },
+    {
+     "empresa": "TBBK",
+     "ticker": "TBBK_US_EQ",
+     "precio_usd": 46.42
+    },
+    {
+     "empresa": "AX",
+     "ticker": "AX_US_EQ",
+     "precio_usd": 87.05
+    },
+    {
+     "empresa": "EZPW",
+     "ticker": "EZPW_US_EQ",
+     "precio_usd": 24.34
+    },
+    {
+     "empresa": "IDT",
+     "ticker": "IDT_US_EQ",
+     "precio_usd": 72.45
+    },
+    {
+     "empresa": "XPEL",
+     "ticker": "XPEL_US_EQ",
+     "precio_usd": 38.48
+    },
+    {
+     "empresa": "BUKS",
+     "ticker": "BUKS_US_EQ",
+     "precio_usd": 5.03
+    },
+    {
+     "empresa": "IBEX",
+     "ticker": "IBEX_US_EQ",
+     "precio_usd": 57.78
+    },
+    {
+     "empresa": "TILE",
+     "ticker": "TILE_US_EQ",
+     "precio_usd": 32.22
+    }
+   ],
+   "pausada": false,
+   "quitadas_no_en_trading212": []
+  },
+  "calidad_g": {
+   "ordenes": [
+    {
+     "empresa": "ADBE",
+     "ticker": "ADBE_US_EQ",
+     "precio_usd": 232.83
+    },
+    {
+     "empresa": "PAYC",
+     "ticker": "PAYC_US_EQ",
+     "precio_usd": 247.49
+    },
+    {
+     "empresa": "FFIV",
+     "ticker": "FFIV_US_EQ",
+     "precio_usd": 317.05
+    },
+    {
+     "empresa": "INTU",
+     "ticker": "INTU_US_EQ",
+     "precio_usd": 271.72
+    },
+    {
+     "empresa": "RMD",
+     "ticker": "RMD_US_EQ",
+     "precio_usd": 245.7
+    },
+    {
+     "empresa": "PCTY",
+     "ticker": "PCTY_US_EQ",
+     "precio_usd": 179.33
+    },
+    {
+     "empresa": "EXEL",
+     "ticker": "EXEL_US_EQ",
+     "precio_usd": 67.25
+    },
+    {
+     "empresa": "TEL",
+     "ticker": "TEL_US_EQ",
+     "precio_usd": 211.48
+    },
+    {
+     "empresa": "NTES",
+     "ticker": "NTES_US_EQ",
+     "precio_usd": 104.26
+    },
+    {
+     "empresa": "FTI",
+     "ticker": "FTI_US_EQ",
+     "precio_usd": 59.32
+    },
+    {
+     "empresa": "UI",
+     "ticker": "UBNT_US_EQ",
+     "precio_usd": 639.25
+    },
+    {
+     "empresa": "RMBS",
+     "ticker": "RMBS_US_EQ",
+     "precio_usd": 68.86
+    },
+    {
+     "empresa": "ACGL",
+     "ticker": "ACGL_US_EQ",
+     "precio_usd": 110.29
+    },
+    {
+     "empresa": "CPAY",
+     "ticker": "FLT_US_EQ",
+     "precio_usd": 454.33
+    },
+    {
+     "empresa": "CINF",
+     "ticker": "CINF_US_EQ",
+     "precio_usd": 192.32
+    }
+   ],
+   "pausada": false,
+   "quitadas_no_en_trading212": []
+  },
+  "dividendos": {
+   "ordenes": [
+    {
+     "empresa": "RDN",
+     "ticker": "RDN_US_EQ",
+     "precio_usd": 37.21
+    },
+    {
+     "empresa": "WKC",
+     "ticker": "INT_US_EQ",
+     "precio_usd": 35.94
+    },
+    {
+     "empresa": "KFRC",
+     "ticker": "KFRC_US_EQ",
+     "precio_usd": 56.25
+    },
+    {
+     "empresa": "HTH",
+     "ticker": "HTH_US_EQ",
+     "precio_usd": 35.5
+    },
+    {
+     "empresa": "TRN",
+     "ticker": "TRN_US_EQ",
+     "precio_usd": 30.19
+    },
+    {
+     "empresa": "HOG",
+     "ticker": "HOG_US_EQ",
+     "precio_usd": 34.2
+    },
+    {
+     "empresa": "UPBD",
+     "ticker": "RCII_US_EQ",
+     "precio_usd": 27.39
+    },
+    {
+     "empresa": "TK",
+     "ticker": "TK_US_EQ",
+     "precio_usd": 13.47
+    }
+   ],
+   "pausada": false,
+   "quitadas_no_en_trading212": []
+  }
+ }
+}
