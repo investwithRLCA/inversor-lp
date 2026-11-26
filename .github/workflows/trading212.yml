@@ -14,6 +14,12 @@ name: Comprobar Trading 212 (lista de valores)
 
 on:
   workflow_dispatch:
+    inputs:
+      diagnostico:
+        description: "Enseñar en el registro cómo viene el catálogo (campos, valores de solo lectura…)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -38,7 +44,9 @@ jobs:
         env:
           T212_METADATA_KEY: ${{ secrets.T212_METADATA_KEY }}
           T212_METADATA_SECRET: ${{ secrets.T212_METADATA_SECRET }}
-        run: python -m mensual.trading212
+          DIAG: ${{ github.event.inputs.diagnostico || 'false' }}
+        run: |
+          if [ "$DIAG" = "true" ]; then python -m mensual.trading212 --diagnostico; else python -m mensual.trading212; fi
 
       - name: Guardar la lista (solo si ha cambiado)
         run: |

@@ -175,9 +175,37 @@ def cargar(hoy: date | None = None, *, online: bool = True, f_descargar=None) ->
                           "solo se quitan las de la lista a mano.")
 
 
+def diagnostico(instrumentos: list[dict]) -> None:
+    """Cómo viene el catálogo (datos públicos): campos, tipos y el campo maxOpenQuantity."""
+    from collections import Counter
+    ee = [i for i in instrumentos if isinstance(i, dict) and str(i.get("ticker") or "").endswith("_US_EQ")]
+    print(f"Catálogo: {len(instrumentos)} valores; {len(ee)} de EE. UU.")
+    print("Campos:", sorted({k for i in instrumentos if isinstance(i, dict) for k in i}))
+    print("Tipos EE. UU.:", dict(Counter(i.get("type") for i in ee)))
+    moq = [i.get("maxOpenQuantity") for i in ee]
+    num = sorted(float(x) for x in moq if isinstance(x, (int, float)))
+    print(f"maxOpenQuantity: {sum(1 for x in moq if x is None)} vacíos, {sum(1 for x in num if x <= 0)} a cero o menos, "
+          f"{sum(1 for x in num if x > 0)} positivos" + (f" (mín {num[0]}, mediana {num[len(num) // 2]}, máx {num[-1]})" if num else ""))
+    print("Valores más repetidos:", Counter(moq).most_common(8))
+    cero = [i for i in ee if isinstance(i.get("maxOpenQuantity"), (int, float)) and i["maxOpenQuantity"] <= 0]
+    print("Ejemplos a cero:", [(i.get("ticker"), i.get("shortName"), i.get("type"), i.get("name")) for i in cero[:25]])
+    for k in ("extendedHours", "currencyCode"):
+        print(k, dict(Counter(i.get(k) for i in ee)))
+    otros = {k for i in ee for k in i} - {"ticker", "type", "workingScheduleId", "isin", "currencyCode", "name", "shortName",
+                                          "maxOpenQuantity", "addedOn", "extendedHours"}
+    for k in sorted(otros):
+        print(f"campo {k}:", Counter(str(i.get(k))[:30] for i in ee).most_common(6))
+
+
 def main() -> int:
     """Descarga la lista y dice cuántas hay (para probar la clave desde GitHub Actions)."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    import sys
+    if "--diagnostico" in sys.argv:
+        clave, secreto = os.getenv("T212_METADATA_KEY"), os.getenv("T212_METADATA_SECRET")
+        diagnostico(descargar(clave, secreto))
+        import time
+        time.sleep(55)                    # la API admite 1 consulta cada 50 s
     d = cargar()
     r = d.resumen()
     print(f"Trading 212: {'comprobado' if r['comprobado'] else 'SIN COMPROBAR'} · {r['fuente']} · "
