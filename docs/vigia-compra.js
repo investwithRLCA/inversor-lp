@@ -15,7 +15,7 @@
 // Tu importe, tu reparto y lo que ya tienes llegan desde Vigía («Guardar en el iPhone») y se guardan
 // solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 2;
+const VERSION = 3;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -40,6 +40,16 @@ function leerJSON(nombre, defecto) {
 }
 function guardarJSON(nombre, valor) { fm.writeString(ruta(nombre), JSON.stringify(valor)); }
 const claveLlavero = (ent) => "vigia.t212." + ent;
+
+// Nota para el atajo de Atajos (iCloud Drive → Scriptable → vigia-mes-hecho.txt): el mes cuya compra ya
+// está resuelta. El atajo la lee antes de abrir Scriptable, así solo lo abre cuando hay algo que comprar.
+const MARCA_ATAJO = "vigia-mes-hecho.txt";
+function marcarMes(mes) {
+  try {
+    const nube = FileManager.iCloud();
+    nube.writeString(nube.joinPath(nube.documentsDirectory(), MARCA_ATAJO), mes || "");
+  } catch (e) { /* sin iCloud Drive: el atajo abrirá Scriptable cada vez, sin más */ }
+}
 const entornoDe = (conf) => (conf && conf.entorno === "demo" ? "demo" : "live");
 
 // ───────────── utilidades ─────────────
@@ -209,13 +219,24 @@ function leerConfig() {
   const c = leerJSON("config.json", null);
   return c && typeof c === "object" && c.v === 1 ? c : null;
 }
-async function bajarLista(conf) {
-  const url = (conf && typeof conf.lista === "string" && /^https:\/\//.test(conf.lista)) ? conf.lista : LISTA_POR_DEFECTO;
+async function bajarJSON(url) {
   const r = new Request(url + (url.includes("?") ? "&" : "?") + "t=" + Date.now());
   r.timeoutInterval = 20;
   const j = await r.loadJSON();
   if (!j || typeof j !== "object" || !j.secciones || !/^\d{4}-\d{2}$/.test(j.mes || "")) throw new Error("lista no válida");
   return j;
+}
+/** La lista real del mes (lista.json). Con la cuenta Practice, si hay una lista de PRUEBA de este mes
+ *  (lista-prueba.json), esa. La cuenta real nunca mira la de prueba. */
+async function bajarLista(conf) {
+  const url = (conf && typeof conf.lista === "string" && /^https:\/\//.test(conf.lista)) ? conf.lista : LISTA_POR_DEFECTO;
+  if (entornoDe(conf) === "demo") {
+    try {
+      const p = await bajarJSON(url.replace(/lista\.json(\?.*)?$/, "lista-prueba.json"));
+      if (p.mes === mesDe(new Date())) return p;
+    } catch (e) { /* sin lista de prueba: la normal */ }
+  }
+  return bajarJSON(url);
 }
 
 function resumenPlan(plan, lista, ent) {
@@ -283,6 +304,7 @@ async function comprarSinCandado(manual) {
       await avisar(`Vigía: revisa la compra de ${nombreMes(mes)}`, "Se cortó mientras enviaba las órdenes. Mira en Trading 212 qué se compró: Vigía no volverá a comprar este mes.");
     }
     if (manual) await dialogo("Este mes ya está hecho", `La compra de ${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) ya se hizo o se saltó. Para repetirla usa «Permitir otra compra este mes».`, ["OK"], false);
+    marcarMes(mes);
     return "yahecho";
   }
   const dia = new Date().getDate();
@@ -311,6 +333,7 @@ async function comprarSinCandado(manual) {
     est.compras[id] = { estado: "saltado", fecha: hoy() };
     guardarJSON("estado.json", est);
     await avisar(`Vigía: ${nombreMes(mes)} sin compra`, "Este mes lo tienes a 0 € en Vigía: no se compra nada.");
+    marcarMes(mes);
     return "cero";
   }
   const auth = Keychain.contains(claveLlavero(ent)) ? Keychain.get(claveLlavero(ent)) : null;
@@ -329,6 +352,7 @@ async function comprarSinCandado(manual) {
     est.compras[id] = { estado: "saltado", fecha: hoy() };
     guardarJSON("estado.json", est);
     await avisar(`Vigía: ${nombreMes(mes)} sin compra`, "No hay nada que comprar este mes (secciones en pausa o en el tope). El dinero se queda en la cuenta.");
+    marcarMes(mes);
     return "nada";
   }
   if (manual) {
@@ -338,6 +362,7 @@ async function comprarSinCandado(manual) {
   // La marca se guarda ANTES de enviar: si algo se corta a mitad, nunca se compra dos veces.
   est.compras[id] = { estado: "enviando", fecha: hoy(), inicio: new Date().toISOString() };
   guardarJSON("estado.json", est);
+  marcarMes(mes);
   const resultados = [];
   let corte = null;
   for (const o of plan.ordenes) {
@@ -353,6 +378,7 @@ async function comprarSinCandado(manual) {
   if (!buenas.length && !dudosas.length) {
     delete est.compras[id];               // no se compró nada: se reintenta en la próxima ejecución
     guardarJSON("estado.json", est);
+    marcarMes("");
     const motivo = corte || (malas[0] && malas[0].motivo) || "error desconocido";
     await avisar("Vigía: no se pudo comprar", `${motivo}. Se volverá a intentar en la próxima ejecución.`);
     return "fallo";
@@ -426,6 +452,8 @@ async function guardarConfig(datos) {
   if (r !== 0) return "cancelado";
   guardarJSON("config.json", { ...c, recibido: new Date().toISOString() });
   const ent = entornoDe(c);
+  const mesHoy = mesDe(new Date());
+  marcarMes((leerJSON("estado.json", {}).compras || {})[ent + ":" + mesHoy] ? mesHoy : "");   // la nota sigue a la cuenta elegida
   if (!Keychain.contains(claveLlavero(ent))) await pedirClave(ent);
   await dialogo("Guardado ✓", "Ya puedes volver a Vigía (arriba a la izquierda).", ["OK"], false);
   return "guardada";
@@ -484,6 +512,7 @@ async function permitirOtra() {
   if (r !== 0) return "cancelado";
   delete est.compras[id];
   guardarJSON("estado.json", est);
+  marcarMes("");
   return "borrada";
 }
 

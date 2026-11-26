@@ -4,8 +4,9 @@ Se publica UNA vez al mes: el primer día de bolsa de EE. UU. del mes, a las 15:
 (con la bolsa abierta tanto en horario de verano como de invierno), con los precios de
 ese momento:
 
-    docs/compra/lista.json             la última (es la que lee el iPhone)
+    docs/compra/lista.json             la última real (la que lee el iPhone)
     docs/compra/lista-<AAAA-MM>.json   archivo de cada mes
+    docs/compra/lista-prueba.json      la de PRUEBA (--forzar): solo la usa la cuenta Practice
 
 Lleva, por sección, las empresas elegidas con su ticker de Trading 212 y su precio, el
 cambio euro/dólar del BCE y el tope por empresa. NO lleva importes: cuánto inviertes y
@@ -19,8 +20,9 @@ admite órdenes en número de acciones (no en euros), así que el iPhone calcula
 acciones son con el precio en dólares y el cambio. Se gasta el 98 % (MARGEN) para que
 una subida del precio o la comisión de cambio no dejen la última orden sin saldo.
 
-Una lista generada a mano con --forzar lleva "prueba": true y el iPhone nunca la compra
-con dinero real (solo en la cuenta Practice).
+Una lista generada a mano con --forzar va a lista-prueba.json, lleva "prueba": true y nunca toca
+la real: la cuenta real del iPhone ni la mira. lista.json existe siempre (aunque sea vacía) para
+que el atajo del iPhone pueda leer su mes sin errores.
 
 Solo datos públicos de empresas: nada de tu cartera ni de tus importes.
 """
@@ -40,6 +42,8 @@ MARGEN = 0.98          # se gasta el 98 % del importe
 DECIMALES = 3          # acciones con 3 decimales (Trading 212 admite hasta 4)
 SCRIPT_MINIMO = 1      # versión mínima del script del iPhone que entiende esta lista
 VERSION_LISTA = 2
+LISTA_VACIA = {"v": VERSION_LISTA, "mes": "", "prueba": False, "secciones": {},
+               "nota": "Aún no hay ninguna lista real publicada."}
 
 
 def ticker_t212(t: str) -> str:
@@ -218,16 +222,10 @@ def main(argv=None) -> int:
     ahora = datetime.now(timezone.utc)
     sal = Path(a.salida)
     archivo = sal / f"lista-{mes}.json"
-    existente = None
-    if archivo.exists():
-        try:
-            existente = json.loads(archivo.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            existente = None
-    if existente and not existente.get("prueba"):
-        print(f"La lista real de {mes} ya está publicada: no se toca (el iPhone ya puede haber comprado).")
-        return 0
     if not a.forzar:
+        if archivo.exists():
+            print(f"La lista real de {mes} ya está publicada: no se toca (el iPhone ya puede haber comprado).")
+            return 0
         if mes != f"{ahora:%Y-%m}":
             print(f"El último informe es de {mes}, no de este mes: no se publica lista (no se compra nada).")
             return 0
@@ -246,8 +244,13 @@ def main(argv=None) -> int:
     doc = lista_mes(inf, fx, no_disponibles(), vivos, precios_de, prueba=a.forzar)
     sal.mkdir(parents=True, exist_ok=True)
     texto = json.dumps(doc, ensure_ascii=False, indent=1)
-    archivo.write_text(texto, encoding="utf-8")
-    (sal / "lista.json").write_text(texto, encoding="utf-8")
+    if a.forzar:
+        (sal / "lista-prueba.json").write_text(texto, encoding="utf-8")
+        if not (sal / "lista.json").exists():
+            (sal / "lista.json").write_text(json.dumps(LISTA_VACIA, ensure_ascii=False), encoding="utf-8")
+    else:
+        archivo.write_text(texto, encoding="utf-8")
+        (sal / "lista.json").write_text(texto, encoding="utf-8")
     print(f"Lista de la compra {mes}{' (PRUEBA: solo para la cuenta Practice)' if a.forzar else ''} · 1 € = {fx:.4f} $")
     for k, s in doc["secciones"].items():
         extra = " (en pausa)" if s["pausada"] else ""

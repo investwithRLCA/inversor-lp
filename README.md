@@ -381,10 +381,14 @@ día de bolsa de EE. UU., a las 15:07 UTC (bolsa abierta en verano y en invierno
 ese momento (Finnhub; si uno se aleja más de un 35 % del informe se usa el del informe), el cambio euro/dólar
 del BCE y el tope por empresa. Sin importes. Se quitan las de `backend/mensual/t212_no_disponibles.txt`. Si
 Finnhub no responde, decide por el horario. Nunca sustituye una lista real ya publicada; a mano, «forzar»
-crea una lista de PRUEBA que solo se compra en la cuenta Practice.
+crea una lista de PRUEBA en `docs/compra/lista-prueba.json`, aparte: solo la usa la cuenta Practice (la real ni
+la mira). `lista.json` existe siempre, aunque sea vacía, para que el atajo pueda leer su mes.
 
-**Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable, lanzado cada día a las 18:30 por una
-automatización de Atajos): si este mes aún no compró y la lista es de este mes, reparte tu importe entre
+**Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable). Lo abre el atajo «Compra Vigia» (abre
+`scriptable:///run?scriptName=Vigia%20Compra&accion=auto`), lanzado por dos automatizaciones de Atajos: cada día a
+las 18:30 y cada vez que abres una app que usas mucho. El atajo solo abre Scriptable si hay algo que comprar: lee
+`vigia-mes-hecho.txt` (iCloud Drive → Scriptable; el script escribe ahí el mes ya resuelto) y el mes de
+`lista.json`): si este mes aún no compró y la lista es de este mes, reparte tu importe entre
 secciones (tus %) y empresas con la MISMA regla que «Este mes» (`planCompra`: a partes iguales, sin pasar del
 tope por empresa contando lo que ya tienes; una sección en pausa no se invierte) y lanza una orden de compra a
 mercado por empresa. **Solo compra: nunca vende.** Gasta el 98 % (margen para subidas y la comisión de cambio),
