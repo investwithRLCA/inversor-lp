@@ -444,6 +444,14 @@
                       tope_posicion: informe.parametros ? informe.parametros.tope_posicion : 0.25, secciones }, orientativa: true };
   }
 
+  /** « · precios del 2026-12-03 17:07 UTC» o « · precios del cierre del 2026-11-30» (lista recién salida del informe). */
+  function cuandoPrecios(pd) {
+    const t = String(pd || "");
+    let m = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}) UTC/.exec(t);
+    if (m) return ` · precios del ${m[1]} UTC`;
+    m = /^(\d{4}-\d{2}-\d{2})/.exec(t);
+    return m ? ` · precios del cierre del ${m[1]}` : "";
+  }
   function seccionAuto() {
     if (!informe) return "";
     cargarListaPublica();
@@ -453,11 +461,11 @@
     const mes = mesActual();
     const listaMes = !!(listaPublica && listaPublica.mes === mes && !listaPublica.prueba);
     const apuntada = a.apuntadas.some((x) => x === "live:" + mes || x.startsWith("live:" + mes + "#"));
-    const deCuando = listaMes && listaPublica.precios_de ? ` · precios del ${String(listaPublica.precios_de).slice(0, 16)} UTC` : "";
+    const deCuando = listaMes ? cuandoPrecios(listaPublica.precios_de) : "";
     const chipLista = listaEstado !== "ok" ? `<span class="m-chip">Comprobando la lista del mes…</span>`
       : listaMes ? `<span class="m-chip m-bien">Lista de ${esc(nombreMes(mes))} publicada${esc(deCuando)}</span>`
       : listaFallo ? `<span class="m-chip m-warn">No he podido comprobar la lista del mes (¿sin conexión?)</span>`
-      : `<span class="m-chip m-warn">La lista de ${esc(nombreMes(mes))} aún no está: sale el primer día de bolsa del mes (te llega un aviso)</span>`;
+      : `<span class="m-chip m-warn">La lista de ${esc(nombreMes(mes))} aún no está: sale el día 1, en cuanto termina el informe del mes (te llega un aviso)</span>`;
     const chipHecha = apuntada ? ` <span class="m-chip m-bien">Compra de ${esc(nombreMes(mes))} apuntada ✓</span>` : "";
     const suma = secs.reduce((s, k) => s + (pct[k] || 0), 0);
     const filasRep = secs.map((k) => `<label class="m-auto-rep"><span>${esc(nombrePaq(k))}</span>
@@ -474,7 +482,7 @@
       }).join("");
       vista = `<div class="m-auto-vista"><p><strong>Esta compra: ${esc(nombreMes(mes))} · ${esc(eur(plan.importe))}</strong></p>
         <ul class="m-ac-lista">${filas}</ul>
-        <p class="m-dim">${orientativa ? "Orientativo, con las empresas de este informe: la lista real se publica el primer día de bolsa del mes, con los precios de ese momento." : `Con la lista publicada (${esc(listaPublica.precios_de || "")}).`}
+        <p class="m-dim">${orientativa ? "Orientativo, con las empresas de este informe: la lista real se publica en cuanto sale el informe del mes, y sus precios se ponen al día cada hora con la bolsa abierta." : `Con la lista publicada${esc(cuandoPrecios(listaPublica.precios_de))}.`}
         Se gasta ≈ ${esc(eur(plan.gastoEur))}; se quedan ≈ ${esc(eur(plan.importe - plan.gastoEur))} en la cuenta (margen del 2 %, topes y redondeo).</p></div>`;
     }
 
@@ -482,7 +490,7 @@
     let motivoNo = null;
     if (errores.length) motivoNo = "";
     else if (a.entorno === "live" && listaEstado !== "ok") motivoNo = "Comprobando la lista del mes…";
-    else if (a.entorno === "live" && !listaMes && !listaFallo) motivoNo = `Se podrá comprar cuando salga la lista de ${nombreMes(mes)} (el primer día de bolsa del mes; te llega un aviso).`;
+    else if (a.entorno === "live" && !listaMes && !listaFallo) motivoNo = `Se podrá comprar cuando salga la lista de ${nombreMes(mes)} (el día 1, al terminar el informe; te llega un aviso).`;
     const urlComprar = conf && motivoNo === null ? urlScriptable("accion=compra&datos=" + M.aB64url(conf)) : "";
     const urlSimular = conf ? urlScriptable("accion=simular&datos=" + M.aB64url(conf)) : "";
     const pasos = `<ol class="m-pasos">
@@ -523,7 +531,7 @@
           <button class="m-btn" data-accion="autoseleccionarscript">Seleccionar todo</button></div>` : ""}</details>
       <details class="m-det" data-k="auto-info" ${abiertos.has("auto-info") ? "open" : ""}><summary>Cómo funciona</summary>
         <ul class="m-ac-lista">
-          <li><strong>Cuándo:</strong> el primer día de bolsa de EE. UU. de cada mes, al abrir la bolsa (hacia las 15:07 UTC en invierno y las 14:07 en verano), Vigía publica la lista del mes y te avisa en el móvil. Luego, cada hora con la bolsa abierta, le pone los precios al día (mismas empresas). Tú compras cuando quieras ese mes con «Comprar ahora». Si la bolsa está cerrada, Trading 212 deja la orden pendiente hasta que abre y reserva un poco más (≈5 %) hasta entonces: deja algo de margen en la cuenta.</li>
+          <li><strong>Cuándo:</strong> el día 1 de cada mes, en cuanto termina el informe, Vigía publica la lista del mes y te avisa en el móvil. Luego, cada hora con la bolsa de EE. UU. abierta, le pone los precios al día (mismas empresas). Tú compras cuando quieras ese mes con «Comprar ahora». Si la bolsa está cerrada, Trading 212 deja la orden pendiente hasta que abre y reserva un poco más (≈5 %) hasta entonces: deja algo de margen en la cuenta.</li>
           <li><strong>Euros y dólares:</strong> tú pagas en euros y Trading 212 convierte solo (0,15 %). Su API solo acepta órdenes en número de acciones, así que el iPhone calcula cuántas son con el precio en dólares de la lista y el cambio del BCE. Se gasta el 98 % para que una subida o la comisión no dejen la última orden sin saldo; si la lista tiene más de 3 días, el iPhone te lo advierte antes de comprar.</li>
           <li><strong>Reparto:</strong> tu importe se divide entre secciones con tus porcentajes y, dentro de cada una, a partes iguales entre sus empresas sin pasar del tope del ${esc(pct2(informe))} por empresa, contando lo que ya tienes. Una sección en pausa no se invierte: ese dinero se queda en la cuenta.</li>
           <li><strong>Seguridad:</strong> esta página no puede comprar sola: siempre confirmas en el iPhone. Una compra por mes y cuenta (si pulsas otra vez, te pregunta); si algo se corta a mitad, no repite; las listas de prueba nunca se compran con dinero real; tu importe, tu reparto, tu cartera y tu clave se quedan en tu iPhone.</li>

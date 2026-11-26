@@ -154,7 +154,8 @@ def lista_mes(inf: dict, fx: float, fuera: set[str], vivos: dict[str, float] | N
         "prueba": bool(prueba),                 # true = generada a mano: nunca se compra con dinero real
         "datos_a": inf.get("datos_a"),
         "generado": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "precios_de": precios_de or f"informe ({inf.get('datos_a')})",
+        # «AAAA-MM-DD …» al principio: el iPhone calcula con eso cuántos días tienen los precios
+        "precios_de": precios_de or f"{inf.get('datos_a')} (precios del informe)",
         "eurusd": fx,
         "margen": MARGEN,
         "decimales": DECIMALES,
@@ -208,11 +209,11 @@ def precios_vivos(fh, tickers: list[str]) -> dict[str, float]:
 
 
 AVISO_SIN_LISTA = (3, 10)       # del día 3 al 10, si aún no hay informe del mes: aviso al móvil
-HORA_AVISO_SIN_LISTA = 13       # … solo en la primera pasada del día (13:07 UTC), para no repetirlo cada hora
+                                # (avisos.py no lo repite si ya salió en las últimas 12 horas)
 
 
 def toca_avisar_sin_lista(ahora: datetime) -> bool:
-    return AVISO_SIN_LISTA[0] <= ahora.day <= AVISO_SIN_LISTA[1] and ahora.hour == HORA_AVISO_SIN_LISTA
+    return AVISO_SIN_LISTA[0] <= ahora.day <= AVISO_SIN_LISTA[1]
 
 
 def refrescar(lista: dict, vivos: dict[str, float], fx: float | None, precios_de: str,

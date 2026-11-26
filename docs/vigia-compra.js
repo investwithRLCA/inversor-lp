@@ -15,7 +15,7 @@
 // Una compra por mes y cuenta (si quieres otra, te lo pregunta). Tu importe, tu reparto y lo que ya
 // tienes se guardan solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 8;
+const VERSION = 9;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -246,9 +246,29 @@ function diasDePrecios(lista) {
   const d = Date.UTC(+m[1], +m[2] - 1, +m[3]);
   return Math.floor((Date.now() - d) / 86400000);
 }
+/** Las que fallaron en una compra (sin contar las «sin respuesta», que pueden estar compradas). */
+function faltanDe(registro) {
+  if (!registro || registro.estado !== "hecho") return [];
+  return (registro.resultados || [])
+    .filter((r) => !r.ok && !r.dudosa && !/sin respuesta|respuesta rara|mira si se hizo|importe no llega/i.test(String(r.motivo || "")))
+    .map((r) => r.empresa);
+}
+/** El plan con solo esas empresas (cada una con lo que le toca del reparto completo). */
+function planSolo(plan, nombres) {
+  const set = new Set(nombres);
+  const secciones = {};
+  Object.entries(plan.secciones).forEach(([k, s]) => {
+    const ordenes = s.ordenes.filter((o) => set.has(o.empresa));
+    if (ordenes.length) secciones[k] = { ...s, ordenes, eur: ordenes.reduce((a, o) => a + o.eur, 0) };
+  });
+  const ordenes = plan.ordenes.filter((o) => set.has(o.empresa));
+  const gasto = ordenes.reduce((a, o) => a + o.eur, 0);
+  return { ...plan, secciones, ordenes, gastoEur: gasto, importe: gasto, parcial: true };
+}
 function resumenPlan(plan, lista, ent) {
   const cuenta = ent === "live" ? "CUENTA REAL" : NOMBRE_ENTORNO[ent];
   const lineas = [`${euros(plan.importe)} · ${cuenta} · lista de ${nombreMes(lista.mes)}${lista.prueba ? " (PRUEBA)" : ""}`];
+  if (plan.parcial) lineas.push(`Solo las que faltaban (${plan.ordenes.length}).`);
   const dias = diasDePrecios(lista);
   if (dias != null && dias > 3) lineas.push(`Ojo: los precios de la lista son de hace ${dias} días. Si han subido mucho, puede que alguna orden no entre por saldo.`);
   Object.entries(plan.secciones).forEach(([k, s]) => {
@@ -256,7 +276,8 @@ function resumenPlan(plan, lista, ent) {
     if (!s.ordenes.length) lineas.push(s.pausada ? "  en pausa este mes: no se invierte" : "  sin empresas: no se invierte");
     s.ordenes.forEach((o) => lineas.push(`  ${o.empresa}: ${acciones(o.cantidad)} acc. ≈ ${euros(o.eur)}`));
   });
-  lineas.push("", `Total ≈ ${euros(plan.gastoEur)}. Se queda sin invertir ≈ ${euros(plan.importe - plan.gastoEur)} (margen del 2 %, topes y redondeo).`);
+  lineas.push("", plan.parcial ? `Total ≈ ${euros(plan.gastoEur)}.`
+    : `Total ≈ ${euros(plan.gastoEur)}. Se queda sin invertir ≈ ${euros(plan.importe - plan.gastoEur)} (margen del 2 %, topes y redondeo).`);
   return lineas.join("\n");
 }
 
@@ -275,6 +296,8 @@ async function enviarOrden(ent, auth, orden) {
   try { j = JSON.parse(texto); } catch (e) { j = null; }
   if (st >= 200 && st < 300 && j && j.id != null) return { ok: true, id: j.id };
   if (st >= 200 && st < 300) return { ok: false, dudosa: true, motivo: "respuesta rara: mira en Trading 212 si se hizo" };
+  // Error del lado de Trading 212 (408, 5xx): la orden pudo llegar a crearse → se trata como «sin respuesta».
+  if (st === 408 || st >= 500) return { ok: false, dudosa: true, status: st, motivo: `Trading 212 respondió ${st}: mira si se hizo` };
   const explicacion = j && (j.clarification || j.detail || j.message || j.title);
   const motivo = (j && [j.code, explicacion].filter(Boolean).join(": ")) || ("HTTP " + st);
   return { ok: false, status: st, motivo: String(motivo).slice(0, 140) };
@@ -389,6 +412,7 @@ async function comprarSinCandado(manual) {
   est.compras = est.compras || {};
   const id = ent + ":" + mes;
   const previa = est.compras[id];
+  let soloEstas = null;                         // «Comprar solo las que faltan»: nombres de esas empresas
   if (previa) {
     if (previa.estado === "enviando" && !previa.avisado) {
       previa.avisado = true;
@@ -399,12 +423,19 @@ async function comprarSinCandado(manual) {
     if (manual) {
       const cortada = previa.estado === "enviando";
       const n = previa.resultados ? previa.resultados.filter((r) => r.ok).length : 0;
+      const faltan = faltanDe(previa);
       const txt = cortada
         ? `La compra de ${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) se cortó a mitad el ${previa.fecha}. Antes de repetir, mira en Trading 212 qué se compró.`
         : previa.estado === "saltado"
           ? `${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) se saltó el ${previa.fecha} (importe a 0 € o nada que comprar).`
-          : `Ya compraste ${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) el ${previa.fecha}${n ? `: ${n} empresas` : ""}.`;
-      otra = (await dialogo("Este mes ya está hecho", txt + "\n\n¿Comprar otra vez? Se reparte de nuevo el importe entre las empresas de la lista.", ["Comprar otra vez"])) === 0;
+          : `Ya compraste ${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) el ${previa.fecha}${n ? `: ${n} empresas` : ""}.` +
+            (faltan.length ? ` Faltaron ${faltan.length}: ${faltan.join(", ")}.` : "");
+      const botones = faltan.length ? [`Comprar solo las que faltan (${faltan.length})`, "Comprar otra vez (todas)"] : ["Comprar otra vez"];
+      const r = await dialogo("Este mes ya está hecho", txt + (faltan.length
+        ? "\n\n«Comprar solo las que faltan» compra esas con lo que les tocaba (con tu importe de ahora). «Comprar otra vez» reparte de nuevo el importe entre todas."
+        : "\n\n¿Comprar otra vez? Se reparte de nuevo el importe entre las empresas de la lista."), botones);
+      otra = r >= 0;
+      if (faltan.length && r === 0) soloEstas = faltan;
     }
     if (!otra) { marcarMes(mes); return "yahecho"; }
   }
@@ -425,7 +456,7 @@ async function comprarSinCandado(manual) {
   }
   if (lista.mes !== mes) {
     if (dia >= 5) await avisarUnaVezAlDia("nolista:" + mes, `Vigía: aún no hay lista de ${nombreMes(mes)}`, "Vigía todavía no ha publicado la compra de este mes. Si sigue así, mira GitHub → Actions → «Compra del mes».");
-    if (manual) await dialogo("Aún no hay lista de este mes", `La última lista es de ${nombreMes(lista.mes)}. La de ${nombreMes(mes)} se publica el primer día de bolsa del mes, al abrir la bolsa de EE. UU. (te llega un aviso).`, ["OK"], false);
+    if (manual) await dialogo("Aún no hay lista de este mes", `La última lista es de ${nombreMes(lista.mes)}. La de ${nombreMes(mes)} se publica el día 1, en cuanto termina el informe del mes (te llega un aviso).`, ["OK"], false);
     return "nolista";
   }
   if (lista.prueba && ent === "live") {
@@ -459,7 +490,14 @@ async function comprarSinCandado(manual) {
     await avisarUnaVezAlDia("sinclave:" + ent, "Vigía: falta la clave de Trading 212", `Abre Scriptable → «Vigia Compra» → «Poner o cambiar la clave» (${NOMBRE_ENTORNO[ent]}).`);
     return "sinclave";
   }
-  const plan = planCompra(lista, conf, mes);
+  let plan = planCompra(lista, conf, mes);
+  if (soloEstas) {
+    plan = planSolo(plan, soloEstas);
+    if (!plan.ordenes.length) {
+      await dialogo("Nada que comprar", "Ninguna de las que faltaban entra ahora en el reparto (en pausa o en el tope por empresa).", ["OK"], false);
+      return "nada";
+    }
+  }
   if (!plan.ordenes.length) {
     registrar({ estado: "saltado", fecha: hoy() });
     await avisar(`Vigía: ${nombreMes(mes)} sin compra`, "No hay nada que comprar este mes (secciones en pausa o en el tope). El dinero se queda en la cuenta.");
@@ -475,7 +513,7 @@ async function comprarSinCandado(manual) {
   registrar({ estado: "enviando", fecha: hoy(), inicio: new Date().toISOString() });
   marcarMes(mes);
   const resultados = [];
-  let corte = null;
+  let corte = null, sinRespuestaSeguidas = 0;
   est.decimales = est.decimales || {};          // decimales que admite cada valor (aprendidos de Trading 212)
   for (const o0 of plan.ordenes) {
     let o = o0;
@@ -507,6 +545,10 @@ async function comprarSinCandado(manual) {
       }
     }
     resultados.push({ ...o, ...res, enviada });
+    // Tres seguidas sin respuesta: se ha caído la conexión (o el iPhone ha parado Scriptable). No se mandan
+    // más a ciegas: las que quedan se marcan «no enviadas» y luego se pueden comprar con «Comprar las que faltan».
+    sinRespuestaSeguidas = res.dudosa ? sinRespuestaSeguidas + 1 : 0;
+    if (sinRespuestaSeguidas >= 3 && !corte) corte = "no enviada: se perdió la conexión con Trading 212";
   }
   // Sin respuesta de Trading 212 (cobertura, móvil bloqueado…): no se sabe si se compró, y repetirla a ciegas
   // podría comprar dos veces. Primero se le pregunta a Trading 212 (si la clave tiene permiso de lectura);
@@ -558,11 +600,15 @@ async function comprarSinCandado(manual) {
   const compra = { id: veces > 1 ? `${id}#${veces}` : id, mes, entorno: ent, fecha: hoy(),
                    compras: buenas.map((r) => ({ t: r.empresa, q: r.cantidad, p: r.precio_usd, s: r.seccion })) };
   est.compras[id] = { estado: "hecho", fecha: hoy(), inicio: est.compras[id].inicio, compra,
-                      resultados: resultados.map((r) => ({ empresa: r.empresa, cantidad: r.cantidad, ok: !!r.ok, motivo: r.motivo || null })) };
+                      resultados: resultados.map((r) => ({ empresa: r.empresa, cantidad: r.cantidad, ok: !!r.ok, dudosa: !!r.dudosa, motivo: r.motivo || null })) };
   guardarJSON("estado.json", est);
   const gastado = buenas.reduce((s, r) => s + r.eur, 0);
   let cuerpo = `Compradas ${buenas.length} de ${resultados.length} · ≈ ${euros(gastado)} (${NOMBRE_ENTORNO[ent]}).`;
-  if (malas.length) cuerpo += ` Fallaron: ${malas.map((r) => `${r.empresa} (${r.motivo})`).join("; ")}.`;
+  const noEnviadas = malas.filter((r) => /^no enviada/.test(String(r.motivo || "")));
+  const fallidas = malas.filter((r) => !noEnviadas.includes(r));
+  if (fallidas.length) cuerpo += ` Fallaron: ${fallidas.map((r) => `${r.empresa} (${r.motivo})`).join("; ")}.`;
+  if (noEnviadas.length) cuerpo += ` No enviadas porque se perdió la conexión: ${noEnviadas.map((r) => r.empresa).join(", ")}.`;
+  if (malas.length && manual) cuerpo += " Para comprar luego las que faltan: Vigía → «Comprar ahora» → «Comprar solo las que faltan».";
   const repetidas = buenas.filter((r) => r.repetida);
   if (repetidas.length) cuerpo += ` Comprobado en Trading 212 que no habían entrado y enviadas otra vez: ${repetidas.map((r) => r.empresa).join(", ")}.`;
   if (dudosas.length) cuerpo += ` Sin respuesta de Trading 212 (mira si se compraron; si sí, apúntalas a mano en Vigía): ${dudosas.map((r) => r.empresa).join(", ")}.`;

@@ -11,12 +11,12 @@ name: Compra del mes (lista para el atajo del iPhone)
 # Avisos al móvil: cuando la lista del mes ya se ve en la web; del día 3 al 10 si aún no
 # hay informe del mes; con «forzar», un aviso de PRUEBA. Los precios al día no avisan.
 #
-# Cuándo: cada hora a y 7, de lunes a viernes, de 13:07 a 21:07 UTC; solo hace
-# algo si la bolsa de EE. UU. está abierta en ese momento (lo mira con el SPY: cubre festivos y
-# el cambio de hora de verano).
-#  · Si aún no hay lista de este mes (y ya está el informe del mes), la publica — será en la
-#    primera hora con la bolsa abierta del primer día de bolsa del mes (≈15:07 UTC en invierno,
-#    ≈14:07 en verano) — y te avisa en el móvil.
+# Cuándo: cada media hora (a y 7 y a y 37), de lunes a viernes, de 13:07 a 21:37 UTC. GitHub
+# retrasa o se salta muchas ejecuciones programadas, por eso hay tantas: casi todas acaban en
+# medio minuto (primer paso: si la lista del mes ya está y la bolsa de EE. UU. está cerrada —lo
+# mira con el SPY: cubre festivos y el cambio de hora—, no hace nada más).
+#  · Si aún no hay lista de este mes: normalmente ya la publica el «Recomendador mensual» al
+#    terminar el informe; si no, la publica esta (en cuanto esté el informe del mes) y te avisa.
 #  · Si ya está, le pone los precios de ese momento: MISMAS empresas, solo cambian los precios
 #    y el cambio euro/dólar. Así, compres el día que compres, el reparto sale con precios de esa
 #    hora. Sin aviso al móvil.
@@ -30,7 +30,7 @@ name: Compra del mes (lista para el atajo del iPhone)
 
 on:
   schedule:
-    - cron: "7 13-21 * * 1-5"
+    - cron: "7,37 13-21 * * 1-5"
   workflow_dispatch:
     inputs:
       forzar:
@@ -53,18 +53,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: ¿Hay algo que hacer?
+        id: pre
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FORZAR: ${{ github.event.inputs.forzar || 'false' }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          from datetime import datetime, timezone
+          ahora = datetime.now(timezone.utc)
+          hay = os.path.exists(f"docs/compra/lista-{ahora:%Y-%m}.json")
+          def abierta():
+              try:
+                  url = "https://finnhub.io/api/v1/quote?symbol=SPY&token=" + os.environ.get("FINNHUB_API_KEY", "")
+                  with urllib.request.urlopen(url, timeout=20) as r:
+                      t = float(json.load(r).get("t") or 0)
+                  return bool(t) and time.time() - t < 20 * 60
+              except Exception as e:
+                  print("Finnhub no responde:", type(e).__name__, "→ se decide por el horario")
+                  m = ahora.hour * 60 + ahora.minute
+                  return ahora.weekday() < 5 and 15 * 60 <= m <= 19 * 60 + 30
+          if os.environ.get("FORZAR") == "true":
+              hacer = True
+          elif not hay:
+              hacer = True        # falta la lista del mes: mirar el informe (y avisar si no está)
+          else:
+              hacer = abierta()   # ya está: solo hay que ponerle precios si la bolsa está abierta
+          print(f"Lista de {ahora:%Y-%m}:", "sí" if hay else "no", "· bolsa/trabajo:", "sí" if hacer else "nada que hacer")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"hacer={'true' if hacer else 'false'}\n")
+          PY
+
       - uses: actions/setup-python@v5
+        if: steps.pre.outputs.hacer == 'true'
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-mensual.txt
 
       - name: Instalar dependencias
+        if: steps.pre.outputs.hacer == 'true'
         working-directory: backend
         run: pip install -r requirements-mensual.txt
 
       - name: Generar la lista de la compra
         id: lista
+        if: steps.pre.outputs.hacer == 'true'
         working-directory: backend
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -78,6 +113,7 @@ jobs:
 
       - name: Publicarla
         id: publicar
+        if: steps.pre.outputs.hacer == 'true'
         env:
           REFRESCADA: ${{ steps.lista.outputs.refrescada }}
         run: |
@@ -88,14 +124,15 @@ jobs:
           if git diff --cached --quiet; then echo "Sin cambios."; exit 0; fi
           if [ -n "$REFRESCADA" ]; then MSG="Compra del mes: precios al día ($(date -u +%H:%M) UTC)"; else MSG="Compra del mes: lista para Trading 212"; fi
           git commit -m "$MSG"
-          for i in 1 2 3; do
-            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
-            sleep 5
+          for i in 1 2 3 4; do
+            if git pull --rebase -X theirs origin main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
           done
           exit 1
 
       - name: Avisar al móvil (ntfy)
-        if: always()
+        if: always() && steps.pre.outputs.hacer == 'true'
         working-directory: backend
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}

@@ -18,9 +18,22 @@ name: Recomendador mensual
 # esta ejecución contienen SOLO información de empresas. Tu cartera y tus
 # importes no pasan nunca por aquí: se calculan en tu móvil.
 
+# CUÁNDO: el día 1, varias veces (y el 2 de reserva), porque GitHub retrasa muchas horas o se salta
+# a menudo las ejecuciones programadas (medido en este repositorio: 7-12 h de retraso). La primera
+# que entra hace el informe; las demás miran en Supabase que ya está el de este mes y no hacen nada.
+# Al terminar publica ya la lista de la compra del mes (con los precios del informe; luego «Compra
+# del mes» los pone al día cada hora con la bolsa abierta) y te avisa en el móvil.
+
 on:
   schedule:
-    - cron: "17 11 1 * *"       # día 1 de cada mes, 11:17 UTC
+    - cron: "17 0 1 * *"        # día 1: 00:17, 04:17, 08:17, 12:17, 16:17 y 20:17 UTC
+    - cron: "17 4 1 * *"
+    - cron: "17 8 1 * *"
+    - cron: "17 12 1 * *"
+    - cron: "17 16 1 * *"
+    - cron: "17 20 1 * *"
+    - cron: "17 4 2 * *"        # reserva: día 2, 04:17 y 14:17 UTC
+    - cron: "17 14 2 * *"
   workflow_dispatch:
     inputs:
       crear_issue:
@@ -41,10 +54,49 @@ on:
 
 permissions:
   issues: write
-  contents: write   # guarda la lista de valores de Trading 212 (backend/mensual/t212_instrumentos.json)
+  contents: write   # guarda la lista de valores de Trading 212 y la lista de la compra del mes
+
+# Una ejecución detrás de otra: la de reserva espera y, al empezar, ve que el informe ya está.
+concurrency:
+  group: informe-mensual
+  cancel-in-progress: false
 
 jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      hacer: ${{ steps.mirar.outputs.hacer }}
+    steps:
+      - name: ¿Ya está el informe de este mes?
+        id: mirar
+        env:
+          EVENTO: ${{ github.event_name }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          from datetime import datetime, timezone
+          mes = f"{datetime.now(timezone.utc):%Y-%m}"
+          hacer = True
+          if os.environ.get("EVENTO") == "schedule":           # a mano, siempre se hace
+              url = os.environ["SUPABASE_URL"].rstrip("/") + f"/rest/v1/mensual_informes?select=mes&mes=eq.{mes}&limit=1"
+              k = os.environ["SUPABASE_SERVICE_KEY"]
+              try:
+                  req = urllib.request.Request(url, headers={"apikey": k, "Authorization": "Bearer " + k})
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      hacer = not json.load(r)
+              except Exception as e:  # si no se puede mirar, se hace (mejor dos informes que ninguno)
+                  print("No se pudo mirar Supabase:", type(e).__name__)
+          print(f"Informe de {mes}:", "falta → se hace" if hacer else "ya está → no se repite")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"hacer={'true' if hacer else 'false'}\n")
+          PY
+
   recomendar:
+    needs: comprobar
+    if: needs.comprobar.outputs.hacer == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -91,11 +143,43 @@ jobs:
           git add "$f"
           if git diff --cached --quiet; then echo "Sin cambios."; exit 0; fi
           git commit -m "Trading 212: lista de valores disponibles actualizada"
-          for i in 1 2 3; do
-            if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
-            sleep 5
+          for i in 1 2 3 4; do
+            if git pull --rebase -X theirs origin main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
           done
           echo "No se pudo guardar la lista (no es grave: el mes que viene se vuelve a consultar)."
+
+      - name: Publicar la lista de la compra del mes (con los precios del informe)
+        id: lista
+        if: success() && (github.event.inputs.guardar || 'true') == 'true'
+        continue-on-error: true     # si falla, la publica «Compra del mes» en su próxima pasada (no es fallo del informe)
+        working-directory: backend
+        run: python -m mensual.compra_t212 --informe informe_mensual.json --salida ../docs/compra
+
+      - name: Subir la lista
+        id: publicar
+        if: success() && steps.lista.outputs.publicada != ''
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/compra
+          if git diff --cached --quiet; then echo "Sin cambios."; exit 0; fi
+          git commit -m "Compra del mes: lista para Trading 212"
+          for i in 1 2 3 4; do
+            if git pull --rebase -X theirs origin main && git push origin HEAD:main; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 5))
+          done
+          exit 1
+
+      - name: Avisar al móvil de que ya está la lista (ntfy)
+        if: success() && steps.lista.outputs.publicada != '' && steps.publicar.outcome == 'success'
+        working-directory: backend
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python3 -m mensual.avisos lista --mes "${{ steps.lista.outputs.publicada }}" || true
 
       - name: Mostrar el resumen en la página de la ejecución
         if: always()

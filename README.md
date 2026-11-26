@@ -75,7 +75,7 @@ tocar nada:
 |---|---|---|
 | `barrido.yml` | **Descubrimiento.** Primero las ~2.900 empresas de índices (S&P 500/400/600, Russell 2000, Nasdaq-100; repasadas cada 45 días), luego el resto del universo EDGAR (~10.000 tickers). Lotes de 400; lo que pasa el cribado y no cabe en el cupo de IA queda en cola para la siguiente ejecución. | cada 2 horas (minuto 17) |
 | `refresco.yml` | **Mantenimiento.** Vuelve a pasar por el embudo a las empresas que YA tienen un análisis guardado, empezando por COMPRA_FUERTE/COMPRA/VIGILAR y por las más antiguas. Casi siempre gratis (caché). | a diario (07:23 UTC) |
-| `vigilancia.yml` | Comprueba el precio de las VIGILAR y abre un Issue si alguna cruza su precio de entrada. | cada 2 horas |
+| `vigilancia.yml` | Comprueba el precio de las VIGILAR y apunta en **un** Issue que se va actualizando las que están en zona de compra. Solo avisa (comentario en el Issue y notificación ntfy en el móvil) cuando **entra** una nueva; si no queda ninguna, cierra el Issue. Antes abría un Issue nuevo en cada pasada con las mismas empresas. | cada 2 horas (minuto 41) |
 
 **Qué limita cuántas empresas se analizan (nov-2026).** No es la velocidad ni la IA: el barrido
 ya había visto el 93 % de las empresas de índices, pero solo ~1 de cada 10 pasaba el cribado de
@@ -85,7 +85,9 @@ filtro Peter Lynch** llegan a la IA aunque no pasen el cribado de calidad (`pipe
 ver más abajo por qué solo las pequeñas). `python run_universo.py --estado` (o el input
 `solo_estado` del workflow) muestra cómo va: universo visto, empresas de índices pendientes y cola
 de IA. Las ejecuciones programadas «en punto» se las saltaba GitHub (salía ~1 de 6): por eso van en
-el minuto 17.
+el minuto 17. **Ojo, aun así GitHub retrasa mucho las programadas** (medido en nov-2026: las diarias
+salen 7–12 h tarde y las de «cada 2 horas» unas 3 veces al día): lo que tiene que salir sí o sí
+(el informe del mes) lleva varios horarios de reserva y comprueba al empezar si ya se hizo.
 
 **Por qué dos barridos distintos (`barrido.yml` y `refresco.yml`) en vez de uno solo.**
 El descubrimiento recorre ~10.000 tickers por turnos: a una empresa ya analizada podría
@@ -275,6 +277,9 @@ paquete de 1–3 años **no pasó** los criterios fijados antes de ver los resul
 ### Cómo funciona cada mes
 
 1. `mensual.yml` (día 1 de cada mes, o a mano) ejecuta `python -m mensual.recomendador --sin-ia`.
+   Está programado seis veces el día 1 y dos el día 2 porque GitHub retrasa o se salta ejecuciones; la
+   primera que entra lo hace y las demás ven en Supabase que el informe del mes ya está y no hacen nada.
+   Al terminar publica la lista de la compra del mes (con los precios del informe) y te avisa en el móvil.
    Ya **no usa Gemini ni Finnhub** (la IA solo servía al paquete de 1–3 años).
 2. Carga el universo desde Supabase (último cribado de cada empresa, con sus métricas y su evaluación
    Lynch) y descarga sus precios (Yahoo, gratis).
@@ -376,22 +381,26 @@ iPhone con eso y con lo que ya tienes en cartera (`scriptable:///run?scriptName=
 Todo eso vive solo en tu móvil: nunca pasa por GitHub ni por Supabase. La página no puede comprar sola: siempre
 confirmas en el iPhone. Con la cuenta real el botón solo se activa cuando ya está la lista de este mes.
 
-**Qué publica Vigía** (workflow «Compra del mes», `.github/workflows/compra.yml`, cada hora a y 7 de 13:07 a
-21:07 UTC de lunes a viernes, solo si la bolsa de EE. UU. está abierta): el primer día de bolsa del mes, en la
-primera pasada con la bolsa abierta (≈15:07 UTC en invierno, ≈14:07 en verano), `docs/compra/lista.json` (y el
-archivo `lista-AAAA-MM.json`): las empresas de cada sección con su ticker de Trading 212 y su precio de ese momento
-(Finnhub; si uno se aleja más de un 35 % del informe se usa el del informe), el cambio euro/dólar del BCE y el
-tope por empresa. Sin importes. Se quitan las de `backend/mensual/t212_no_disponibles.txt`. Si Finnhub no
-responde, decide por el horario. **Después, cada hora con la bolsa abierta, le pone los precios al día**: las
-MISMAS empresas, solo cambian los precios (con la misma protección del 35 %) y el cambio, así que compres el día
-que compres el reparto sale con precios de esa hora; sin aviso al móvil y sin cambiar nunca las empresas del mes. A mano, «forzar»
-crea una lista de PRUEBA en `docs/compra/lista-prueba.json`, aparte: solo la usa la cuenta Practice (la real ni
-la mira). `lista.json` existe siempre, aunque sea vacía.
+**Qué publica Vigía.** La lista de la compra del mes, `docs/compra/lista.json` (y el archivo
+`lista-AAAA-MM.json`): las empresas de cada sección con su ticker de Trading 212 y su precio, el cambio euro/dólar
+del BCE y el tope por empresa. Sin importes. Se quitan las de `backend/mensual/t212_no_disponibles.txt`.
+- **Cuándo sale:** el día 1, en cuanto termina el informe del mes (`mensual.yml` la publica al final, con los
+  precios del informe: «precios del cierre del …»). Si eso fallara, la publica `compra.yml` en su siguiente pasada.
+- **Precios al día** (`compra.yml`, cada media hora de 13:07 a 21:37 UTC de lunes a viernes; GitHub se salta
+  muchas, por eso hay tantas): si la bolsa de EE. UU. está abierta (lo mira con el SPY; si Finnhub no responde,
+  por el horario) le pone los precios de ese momento. Las MISMAS empresas: solo cambian los precios (si uno se
+  aleja más de un 35 % del anterior, se ignora: sería un dato roto) y el cambio. Compres el día que compres, el
+  reparto sale con precios de esa hora. Sin aviso al móvil y sin cambiar nunca las empresas del mes. Con la bolsa
+  cerrada la pasada acaba en medio minuto sin tocar nada.
+- A mano, «forzar» crea una lista de PRUEBA en `docs/compra/lista-prueba.json`, aparte: solo la usa la cuenta
+  Practice (la real ni la mira). `lista.json` existe siempre, aunque sea vacía.
 
 **Aviso al móvil** (`backend/mensual/avisos.py`, app gratuita ntfy): cuando la lista ya se ve en la web, te llega
 «Vigía · compra de diciembre 2026»; al tocarlo se abre Vigía. También avisa si del día 3 al 10 aún no hay informe
-del mes (una vez al día), y si el informe mensual falla. El tema de ntfy es el secreto de GitHub `NTFY_TOPIC` (sin él no se manda
-nada). Para comprobarlo: Actions → «Probar avisos al móvil (ntfy)». Los avisos no llevan nada de tu cartera.
+del mes, si el informe mensual falla y cuando una vigilada entra en zona de compra. Cada aviso sale una sola vez
+aunque GitHub repita el workflow (antes de mandarlo mira en ntfy si ya salió en las últimas 12 horas). El tema de
+ntfy es el secreto de GitHub `NTFY_TOPIC` (sin él no se manda nada). Para comprobarlo: Actions → «Probar avisos al
+móvil (ntfy)». Los avisos no llevan nada de tu cartera.
 
 **Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable): baja la lista del mes, reparte tu importe
 entre secciones (tus %) y empresas con la MISMA regla que «Este mes» (`planCompra`: a partes iguales, sin pasar del
@@ -410,8 +419,12 @@ rechaza por la orden (400) la clave vale, si es por la clave (401/403) avisa.
 Salvaguardas: una compra por mes y cuenta (si pulsas otra vez, pregunta; la segunda lleva otro id para que
 Vigía no la tome por la misma), la marca se guarda antes de enviar (si algo se corta, no repite), candado contra
 dos ejecuciones a la vez, corta si Trading 212 rechaza la clave, reintenta una vez si pide esperar, no repite una
-orden sin respuesta. Si aún te queda el antiguo atajo «Compra Vigia» con sus automatizaciones, ya no compra: el
-script está en modo manual (se pueden borrar).
+orden sin respuesta (ni un error 408/5xx de Trading 212, que también puede haberla creado: se comprueba igual), y
+si se quedan **tres seguidas sin respuesta** deja de mandar (se ha caído la conexión o el iPhone ha parado
+Scriptable): las que faltan quedan «no enviadas» y, al volver a pulsar «Comprar ahora», ofrece **«Comprar solo las
+que faltan»** (cada una con lo que le tocaba). Si Trading 212 admite menos decimales en una acción (p. ej. BUKS, 2),
+recorta la cantidad hacia abajo, reintenta y lo recuerda. Si aún te queda el antiguo atajo «Compra Vigia» con sus
+automatizaciones, ya no compra: el script está en modo manual (se pueden borrar).
 
 Por qué hay dólares: tú pagas en euros y Trading 212 convierte solo, pero su API solo admite órdenes en número
 de acciones, así que el iPhone calcula cuántas son con el precio en dólares y el cambio.
@@ -436,7 +449,7 @@ de acciones, así que el iPhone calcula cuántas son con el precio en dólares y
 | `backend/mensual/explicacion.py` | «¿Por qué ha caído?»: titulares + Gemini (solo lo usaba el paquete 1–3 años, hoy retirado). |
 | `db/006_mensual.sql` | Tabla del informe y vista pública de solo lectura (aplicar en el SQL Editor de Supabase). |
 | `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Este mes. |
-| `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano; si falla, aviso al móvil. |
+| `.github/workflows/mensual.yml` | Informe mensual (día 1, con horarios de reserva) o a mano; publica la lista de la compra y avisa; si falla, aviso al móvil. |
 | `.github/workflows/compra.yml` · `backend/mensual/compra_t212.py` | Lista de la compra del mes para Trading 212 (primer día de bolsa) y aviso al móvil. |
 | `backend/mensual/avisos.py` · `.github/workflows/avisos.yml` | Avisos al móvil con ntfy (secreto `NTFY_TOPIC`) y su prueba a mano. |
 | `docs/vigia-compra.js` | Script del iPhone (Scriptable) que compra en Trading 212 al pulsar «Comprar ahora». |

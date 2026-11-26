@@ -4,8 +4,13 @@ En la app ntfy te suscribes a un «tema» con un nombre difícil de adivinar (fu
 contraseña) y GitHub te manda ahí los avisos:
 
   · cuando sale la lista de la compra del mes (el primer día de bolsa, tras el informe);
-  · del día 3 al 10, si todavía no hay informe del mes (una vez al día);
-  · si el informe mensual falla.
+  · del día 3 al 10, si todavía no hay informe del mes;
+  · si el informe mensual falla;
+  · cuando una empresa vigilada ENTRA en zona de compra (vigilancia de precio).
+
+Cada aviso sale UNA vez aunque se intente varias veces (GitHub repite los workflows): antes de
+mandarlo se mira en ntfy si ya se mandó ese mismo aviso en las últimas 12 horas (lo que ntfy
+guarda).
 
 El nombre del tema es el secreto de GitHub NTFY_TOPIC: no está en el código porque este
 repositorio es público. Sin ese secreto no se manda nada (y no falla nada).
@@ -26,6 +31,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -49,13 +55,36 @@ def mes_actual(ahora: datetime | None = None) -> str:
     return f"{(ahora or datetime.now(timezone.utc)):%Y-%m}"
 
 
+def ya_enviado(titulo: str, tema: str, *, horas: int = 12, abrir=urllib.request.urlopen) -> bool:
+    """¿Se mandó ya este mismo aviso (mismo título) en las últimas horas? Lo mira en ntfy, que guarda
+    los mensajes 12 horas. Si ntfy no contesta, se da por no enviado (mejor un aviso de más que ninguno)."""
+    req = urllib.request.Request(f"{SERVIDOR}/{urllib.parse.quote(tema)}/json?poll=1&since={int(horas)}h")
+    try:
+        with abrir(req, timeout=20) as r:
+            for linea in r.read().decode("utf-8", "replace").splitlines():
+                try:
+                    m = json.loads(linea)
+                except ValueError:
+                    continue
+                if m.get("event", "message") == "message" and m.get("title") == titulo:
+                    return True
+    except Exception as e:  # noqa: BLE001
+        print(f"No se pudo mirar en ntfy si ya se avisó ({type(e).__name__}).")
+    return False
+
+
 def enviar(titulo: str, mensaje: str, *, click: str | None = VIGIA + "#mensual", tags: list[str] | None = None,
-           prioridad: int = 3, tema: str | None = None, abrir=urllib.request.urlopen, pausa=time.sleep) -> bool:
-    """Manda el aviso (JSON, así los acentos llegan bien). True si ntfy lo aceptó. Nunca imprime el tema."""
+           prioridad: int = 3, tema: str | None = None, una_vez: bool = False, abrir=urllib.request.urlopen,
+           pausa=time.sleep) -> bool:
+    """Manda el aviso (JSON, así los acentos llegan bien). True si ntfy lo aceptó. Nunca imprime el tema.
+    Con una_vez=True no lo repite si ya salió en las últimas 12 horas."""
     tema = (tema if tema is not None else os.getenv("NTFY_TOPIC", "")).strip()
     if not tema:
         print("Sin el secreto NTFY_TOPIC: no se manda aviso al móvil.")
         return False
+    if una_vez and ya_enviado(titulo, tema, abrir=abrir):
+        print(f"Este aviso ya salió hace poco: no se repite ({titulo}).")
+        return True
     cuerpo = {"topic": tema, "title": titulo, "message": mensaje, "tags": tags or [], "priority": prioridad}
     if click:
         cuerpo["click"] = click
@@ -111,22 +140,36 @@ def aviso_lista(mes: str, prueba: bool = False, *, esperar=esperar_publicada, ma
     return mandar(f"Vigía · compra de {nombre_mes(mes)}",
                   f"Ya están el informe y la lista de la compra de {nombre_mes(mes)}. "
                   "Abre Vigía → Este mes → «Comprar en Trading 212» → «Comprar ahora».",
-                  tags=["chart_with_upwards_trend"], prioridad=4)
+                  tags=["chart_with_upwards_trend"], prioridad=4, una_vez=True)
 
 
 def aviso_sin_lista(mes: str, *, mandar=enviar) -> bool:
     return mandar(f"Vigía · aún no hay lista de {nombre_mes(mes)}",
                   "El informe de este mes todavía no ha salido, así que no hay lista de la compra. "
                   "Se sigue intentando cada día; si no llega, mira GitHub → Actions → «Recomendador mensual».",
-                  tags=["warning"], prioridad=4, click="https://github.com/investwithRLCA/inversor-lp/actions")
+                  tags=["warning"], prioridad=4, click="https://github.com/investwithRLCA/inversor-lp/actions", una_vez=True)
 
 
 def aviso_fallo_informe(mes: str | None = None, *, mandar=enviar) -> bool:
     mes = mes or mes_actual()
     return mandar(f"Vigía · el informe de {nombre_mes(mes)} ha fallado",
                   "No se ha podido generar el informe mensual. Mira GitHub → Actions → «Recomendador mensual» "
-                  "y vuelve a lanzarlo («Run workflow»).",
-                  tags=["warning"], prioridad=4, click="https://github.com/investwithRLCA/inversor-lp/actions")
+                  "y vuelve a lanzarlo («Run workflow»). Se reintenta solo un par de veces más el día 1 y el 2.",
+                  tags=["warning"], prioridad=4, click="https://github.com/investwithRLCA/inversor-lp/actions", una_vez=True)
+
+
+def aviso_vigilancia(tickers: list[str], url: str | None = None, *, mandar=enviar) -> bool:
+    """Una o más vigiladas acaban de entrar en zona de compra (precio ≤ su precio de entrada)."""
+    tickers = [t for t in tickers if t]
+    if not tickers:
+        return False
+    if tickers == ["PRUEBA"]:
+        return mandar("Vigía · vigilancia (prueba)", "Si te llega este aviso, la vigilancia de precio también te avisa en el móvil.",
+                      tags=["test_tube"], click=url or None)
+    lista = ", ".join(tickers[:6]) + (f" y {len(tickers) - 6} más" if len(tickers) > 6 else "")
+    return mandar(f"Vigía · en zona de compra: {lista}",
+                  "Han bajado a su precio de entrada. Míralo en el aviso de vigilancia (toca para abrirlo).",
+                  tags=["mag"], prioridad=4, click=url or None, una_vez=True)
 
 
 def main(argv=None) -> int:
@@ -135,6 +178,7 @@ def main(argv=None) -> int:
     pl = sub.add_parser("lista"); pl.add_argument("--mes", required=True); pl.add_argument("--prueba", action="store_true")
     s = sub.add_parser("sin-lista"); s.add_argument("--mes", required=True)
     f = sub.add_parser("fallo-informe"); f.add_argument("--mes")
+    v = sub.add_parser("vigilancia"); v.add_argument("--tickers", required=True); v.add_argument("--url")
     sub.add_parser("prueba")
     a = ap.parse_args(argv)
     if a.que == "lista":
@@ -143,6 +187,8 @@ def main(argv=None) -> int:
         aviso_sin_lista(a.mes)
     elif a.que == "fallo-informe":
         aviso_fallo_informe(a.mes)
+    elif a.que == "vigilancia":
+        aviso_vigilancia([t.strip() for t in a.tickers.split(",")], a.url)
     else:
         ok = enviar("Vigía · prueba de avisos", "Si ves esto, los avisos de Vigía te llegan bien.", tags=["white_check_mark"])
         return 0 if ok else 1

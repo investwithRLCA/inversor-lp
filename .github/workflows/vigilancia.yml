@@ -1,9 +1,12 @@
 name: Vigilancia de precio
 
 # Comprueba el precio actual (vía Finnhub) de todas las empresas marcadas
-# VIGILAR con un precio de entrada calculado, y abre un Issue en este
-# repositorio cuando alguna ha cruzado ese precio. No llama a la IA — es
-# barato y rápido, así que corre cada 2 horas.
+# VIGILAR con un precio de entrada calculado. Las que están en zona de compra
+# se apuntan en UN Issue que se va actualizando (antes se abría uno nuevo en
+# cada pasada, con las mismas empresas). Solo te llega aviso —comentario en el
+# Issue y notificación en el móvil por ntfy— cuando ENTRA alguna empresa nueva;
+# si ya no queda ninguna, el Issue se cierra. No llama a la IA — es barato y
+# rápido, así que corre cada 2 horas.
 #
 # El Issue se ASIGNA al propietario del repositorio y lleva la etiqueta
 # "alerta-compra": GitHub notifica a la persona asignada a un Issue según
@@ -19,7 +22,7 @@ name: Vigilancia de precio
 
 on:
   schedule:
-    - cron: "0 */2 * * *"       # cada 2 horas, en UTC
+    - cron: "41 */2 * * *"      # cada 2 horas, minuto 41 (en punto GitHub retrasa o se salta más ejecuciones)
   workflow_dispatch:
     inputs:
       prueba:
@@ -34,6 +37,7 @@ permissions:
 jobs:
   vigilar:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -57,64 +61,93 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
         run: python vigilar.py --salida alertas.json
 
-      - name: Abrir Issue si hay alertas (o si es una prueba)
+      - name: Apuntar en el Issue de vigilancia (o crear uno de prueba)
+        id: issue
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const esPrueba = ${{ github.event.inputs.prueba == 'true' }};
             const propietario = context.repo.owner;
+            const { owner, repo } = context.repo;
+            const ETIQUETA = 'alerta-compra';
 
             let alertas = [];
             if (esPrueba) {
-              alertas = [{
-                ticker: "PRUEBA",
-                nombre: "Empresa de prueba",
-                precio_actual: 99.9,
-                precio_entrada: 100,
-              }];
+              alertas = [{ ticker: "PRUEBA", nombre: "Empresa de prueba", precio_actual: 99.9, precio_entrada: 100 }];
             } else if (fs.existsSync('backend/alertas.json')) {
               alertas = JSON.parse(fs.readFileSync('backend/alertas.json', 'utf8'));
             }
 
-            if (alertas.length === 0) {
-              console.log('Sin alertas — no se abre ningún Issue.');
+            async function etiqueta() {
+              try { await github.rest.issues.getLabel({ owner, repo, name: ETIQUETA }); }
+              catch (e) {
+                await github.rest.issues.createLabel({ owner, repo, name: ETIQUETA, color: 'b60205',
+                  description: 'Aviso automático: una vigilada ha cruzado su precio de entrada' });
+              }
+            }
+            const lineas = (as) => as.map(a =>
+              `- **${a.ticker}** (${a.nombre || 's/n'}): precio actual ${a.precio_actual} ≤ entrada ${a.precio_entrada}`).join('\n');
+
+            if (esPrueba) {
+              await etiqueta();
+              await github.rest.issues.create({ owner, repo, title: 'Prueba de vigilancia: el aviso funciona ✅',
+                body: `@${propietario}\n\n${lineas(alertas)}\n\n_Este es un Issue de prueba, generado a mano desde "Run workflow". ` +
+                      'Si te ha llegado un aviso (correo, notificación del móvil...), el mecanismo funciona de verdad._',
+                assignees: [propietario], labels: [ETIQUETA] });
+              core.setOutput('nuevas', 'PRUEBA');
               return;
             }
 
-            // Asegura que la etiqueta exista antes de usarla (si no, créala).
-            const ETIQUETA = 'alerta-compra';
-            try {
-              await github.rest.issues.getLabel({
-                owner: context.repo.owner, repo: context.repo.repo, name: ETIQUETA,
-              });
-            } catch (e) {
-              await github.rest.issues.createLabel({
-                owner: context.repo.owner, repo: context.repo.repo, name: ETIQUETA,
-                color: 'b60205',
-                description: 'Aviso automático: una vigilada ha cruzado su precio de entrada',
-              });
+            // El Issue de vigilancia abierto más reciente (los de prueba no cuentan).
+            const abiertos = (await github.paginate(github.rest.issues.listForRepo,
+              { owner, repo, state: 'open', labels: ETIQUETA, per_page: 100 }))
+              .filter(i => !i.pull_request && !String(i.title).startsWith('Prueba de vigilancia'))
+              .sort((a, b) => b.number - a.number);
+            const actual = abiertos[0] || null;
+            const antes = (() => {
+              if (!actual) return [];
+              const m = /<!-- vigilancia: ([^>]*) -->/.exec(actual.body || '');
+              if (m) return m[1].split(',').map(x => x.trim()).filter(Boolean);
+              return [...String(actual.body || '').matchAll(/^- \*\*([^*]+)\*\*/gm)].map(x => x[1]);
+            })();
+            const ahora = alertas.map(a => a.ticker);
+            const nuevas = alertas.filter(a => !antes.includes(a.ticker));
+            const fecha = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+
+            if (!alertas.length) {
+              if (actual) {
+                await github.rest.issues.update({ owner, repo, issue_number: actual.number, state: 'closed',
+                  body: `@${propietario}\n\nNinguna vigilada está ya en zona de compra (comprobado ${fecha}).\n\n<!-- vigilancia:  -->` });
+                console.log(`Ninguna en zona de compra: cerrado #${actual.number}.`);
+              } else console.log('Sin alertas — nada que hacer.');
+              return;
             }
+            const cuerpo = `@${propietario}\n\nEn zona de compra ahora (comprobado ${fecha}):\n\n${lineas(alertas)}\n\n` +
+              '_Este Issue se actualiza solo en cada comprobación. Solo te llega aviso cuando entra alguna empresa nueva._' +
+              `\n\n<!-- vigilancia: ${ahora.join(',')} -->`;
+            let url;
+            if (actual) {
+              await github.rest.issues.update({ owner, repo, issue_number: actual.number, body: cuerpo });   // sin notificación
+              url = actual.html_url;
+              if (nuevas.length) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: actual.number,
+                  body: `@${propietario} Nuevas en zona de compra:\n\n${lineas(nuevas)}` });
+              }
+            } else {
+              await etiqueta();
+              const r = await github.rest.issues.create({ owner, repo,
+                title: `Vigilancia: empresas en zona de compra (desde ${fecha.slice(0, 10)})`,
+                body: cuerpo, assignees: [propietario], labels: [ETIQUETA] });
+              url = r.data.html_url;
+            }
+            console.log(`${ahora.length} en zona de compra; nuevas: ${nuevas.map(a => a.ticker).join(', ') || 'ninguna'}.`);
+            core.setOutput('nuevas', nuevas.map(a => a.ticker).join(','));
+            core.setOutput('url', url || '');
 
-            const fecha = new Date().toISOString().slice(0, 10);
-            const cuerpo = alertas.map(a =>
-              `- **${a.ticker}** (${a.nombre || 's/n'}): precio actual ${a.precio_actual} ≤ entrada ${a.precio_entrada}`
-            ).join('\n');
-
-            const titulo = esPrueba
-              ? 'Prueba de vigilancia: el aviso funciona ✅'
-              : `Vigilancia ${fecha}: ${alertas.length} empresa(s) en zona de compra`;
-
-            const nota = esPrueba
-              ? '\n\n_Este es un Issue de prueba, generado a mano desde "Run workflow". ' +
-                'Si te ha llegado un aviso (correo, notificación del móvil...), el mecanismo funciona de verdad._'
-              : '';
-
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: titulo,
-              body: `@${propietario}\n\n${cuerpo}${nota}`,
-              assignees: [propietario],
-              labels: [ETIQUETA],
-            });
+      - name: Avisar al móvil si entra alguna nueva (ntfy)
+        if: steps.issue.outputs.nuevas != ''
+        working-directory: backend
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python3 -m mensual.avisos vigilancia --tickers "${{ steps.issue.outputs.nuevas }}" --url "${{ steps.issue.outputs.url }}" || true
