@@ -15,7 +15,7 @@
 // Tu importe, tu reparto y lo que ya tienes llegan desde Vigía («Guardar en el iPhone») y se guardan
 // solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 1;
+const VERSION = 2;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -314,6 +314,11 @@ async function comprarSinCandado(manual) {
     return "cero";
   }
   const auth = Keychain.contains(claveLlavero(ent)) ? Keychain.get(claveLlavero(ent)) : null;
+  if (!auth && !manual && leerJSON("claves.json", {})[ent]) {
+    // La clave está guardada pero el llavero no se puede leer ahora (iPhone bloqueado):
+    // no se avisa ni se marca nada; la próxima ejecución con el iPhone en uso comprará.
+    return "bloqueado";
+  }
   if (!auth) {
     await avisarUnaVezAlDia("sinclave:" + ent, "Vigía: falta la clave de Trading 212", `Abre Scriptable → «Vigia Compra» → «Poner o cambiar la clave» (${NOMBRE_ENTORNO[ent]}).`);
     if (manual) await pedirClave(ent);
@@ -385,6 +390,7 @@ async function pedirClave(entPreferido) {
   const k = String(a.textFieldValue(0) || "").trim(), s = String(a.textFieldValue(1) || "").trim();
   if (!k || !s) { await dialogo("Falta algo", "Hacen falta la clave y el secreto.", ["OK"], false); return; }
   Keychain.set(claveLlavero(ent), Data.fromString(k + ":" + s).toBase64String());
+  guardarJSON("claves.json", { ...leerJSON("claves.json", {}), [ent]: true });
   await dialogo("Clave guardada ✓", `Guardada para la ${NOMBRE_ENTORNO[ent]}.`, ["OK"], false);
 }
 
