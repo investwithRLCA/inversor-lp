@@ -300,6 +300,50 @@
   // misma regla que esta pantalla (M.planCompra) y compra. Nada de esto sale de tu móvil.
   const NOMBRE_SCRIPT = "Vigia Compra";
   const urlScriptable = (q) => "scriptable:///run?scriptName=" + encodeURIComponent(NOMBRE_SCRIPT) + "&" + q;
+
+  // «Copiar el script»: Safari (iPhone) solo deja copiar DENTRO del toque, sin esperar a nada antes.
+  // Por eso el script se descarga al pintar la tarjeta y, al tocar, ya está en memoria y se copia al momento.
+  const urlScript = () => new URL("vigia-compra.js", location.href).href.split("#")[0];
+  let scriptTxt = null, scriptDescarga = null, scriptAMano = false;
+  function precargarScript() {
+    if (scriptTxt) return Promise.resolve(scriptTxt);
+    if (!scriptDescarga) {
+      scriptDescarga = fetch(urlScript() + "?t=" + Date.now(), { cache: "no-store" })
+        .then((r) => r.text().then((t) => {
+          if (!r.ok || !t.includes("VIGIA")) throw new Error("no descargado");
+          scriptTxt = t; return t;
+        }))
+        .catch((e) => { scriptDescarga = null; throw e; });
+    }
+    return scriptDescarga;
+  }
+  /** Copia a la antigua (para navegadores sin portapapeles moderno). Hay que llamarla dentro del toque. */
+  function copiarALaAntigua(t) {
+    const ta = document.createElement("textarea");
+    ta.value = t; ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px";
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { ta.setSelectionRange(0, t.length); } catch (e) { /* nada */ }
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  /** Copia el script. Todo lo que toca el portapapeles se lanza en el mismo toque (sin await antes). */
+  function copiarScript() {
+    const cb = navigator.clipboard;
+    if (scriptTxt) {
+      if (cb && cb.writeText) return cb.writeText(scriptTxt).then(() => true, () => copiarALaAntigua(scriptTxt));
+      return Promise.resolve(copiarALaAntigua(scriptTxt));
+    }
+    // Aún descargándose: Safari acepta una promesa dentro del ClipboardItem sin perder el toque.
+    if (cb && cb.write && typeof ClipboardItem !== "undefined") {
+      const item = new ClipboardItem({ "text/plain": precargarScript().then((t) => new Blob([t], { type: "text/plain" })) });
+      return cb.write([item]).then(() => true, () => precargarScript().then((t) => cb.writeText(t)).then(() => true, () => false));
+    }
+    return precargarScript().then((t) => (cb && cb.writeText ? cb.writeText(t).then(() => true, () => copiarALaAntigua(t)) : copiarALaAntigua(t)));
+  }
   const NOMBRE_MES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
   const nombreMes = (mes) => { const [a, m] = String(mes).split("-").map(Number); return NOMBRE_MES[m - 1] ? `${NOMBRE_MES[m - 1]} ${a}` : String(mes); };
   const eur = (n, d = 2) => (n == null || !isFinite(n)) ? "—" : num(n, d) + " €";
@@ -451,9 +495,9 @@
     const urlGuardar = conf ? urlScriptable("accion=config&datos=" + M.aB64url(conf)) : "";
     const pasos = `<ol class="m-pasos">
         <li><strong>Instala Scriptable</strong> (gratis, App Store).</li>
-        <li>Pulsa <strong>«Copiar el script»</strong> (abajo). En Scriptable: «+» arriba a la derecha, pega, toca el título y llámalo exactamente <code>${esc(NOMBRE_SCRIPT)}</code> → <em>Done</em>.</li>
+        <li>Pulsa <strong>«Copiar el script»</strong> (abajo). En Scriptable: «+» arriba a la derecha, pega, toca el título y llámalo exactamente <code>${esc(NOMBRE_SCRIPT)}</code> → <em>Done</em>. <span class="m-dim">Para actualizarlo: en Scriptable, los tres puntos (…) de «${esc(NOMBRE_SCRIPT)}» → mantén pulsado el texto → <em>Select All</em> → <em>Paste</em> → <em>Done</em>.</span></li>
         <li><strong>Clave de prueba:</strong> en Trading 212 cambia a la cuenta <strong>Practice</strong> → Settings → API (Beta) → generar clave con el permiso <strong>«Orders: execute»</strong>. Copia la clave y el secreto.</li>
-        <li>Aquí arriba: cuenta <strong>Practice (prueba)</strong>, tu importe y el reparto → <strong>«Guardar en el iPhone»</strong>. Se abre Scriptable, te enseña el resumen → <em>Guardar</em> → te pide la clave y el secreto (se quedan en el llavero del iPhone; Vigía no los ve).</li>
+        <li>Aquí arriba: cuenta <strong>Practice (prueba)</strong>, tu importe y el reparto → <strong>«Guardar en el iPhone»</strong>. Se abre Scriptable, te enseña el resumen → <em>Guardar</em> → te pide la clave en dos pasos: copia la <em>API key</em> en Trading 212, vuelve y pulsa <em>Pegar</em>; luego lo mismo con el <em>API secret</em>. La comprueba con Trading 212 sin comprar nada y la guarda en el llavero del iPhone (Vigía no la ve).</li>
         <li><strong>Atajo «Compra Vigia»</strong> (Atajos → Shortcuts → «+»). Solo abre Scriptable cuando hay algo que comprar:
           <ol>
             <li><strong>Format Date</strong>: <em>Current Date</em>, formato <em>Custom</em> <code>yyyy-MM</code> → <strong>Set Variable</strong> <code>Mes</code>.</li>
@@ -490,7 +534,10 @@
       ${pegar}
       <p class="m-nota">Tras cada compra el iPhone te avisa; toca el aviso (copia la compra) y aquí pulsa «Pegar compra del iPhone» para apuntarla en tu cartera. Después, «Guardar en el iPhone» para que sepa lo que ya tienes.</p>
       <details class="m-det" data-k="auto-config" ${abiertos.has("auto-config") ? "open" : ""}><summary>Preparar el iPhone (una vez)</summary>${pasos}
-        <div class="m-acciones"><button class="m-btn" data-accion="autocopiarscript">Copiar el script</button></div></details>
+        <div class="m-acciones"><button class="m-btn" data-accion="autocopiarscript">Copiar el script</button></div>
+        ${scriptAMano && scriptTxt ? `<div class="m-auto-pegar"><p class="m-dim">Este navegador no me deja copiarlo solo. Toca «Seleccionar todo» y luego <em>Copy</em> (o mantén pulsado dentro → <em>Select All</em> → <em>Copy</em>).</p>
+          <textarea id="m-auto-script" rows="6" readonly>${esc(scriptTxt)}</textarea>
+          <button class="m-btn" data-accion="autoseleccionarscript">Seleccionar todo</button></div>` : ""}</details>
       <details class="m-det" data-k="auto-info" ${abiertos.has("auto-info") ? "open" : ""}><summary>Cómo funciona</summary>
         <ul class="m-ac-lista">
           <li><strong>Cuándo:</strong> el primer día de bolsa de EE. UU. de cada mes, a las 15:07 UTC (16:07 en España en invierno, 17:07 en verano), Vigía publica la lista del mes con los precios de ese momento. Tu iPhone la compra a las 18:30. Si estás de viaje y la bolsa está cerrada, Trading 212 deja la orden pendiente hasta que abre.</li>
@@ -522,6 +569,7 @@
     }));
     const ent = document.getElementById("m-auto-entorno");
     if (ent) ent.addEventListener("change", (e) => { const a = autoCfg(); a.entorno = e.target.value === "demo" ? "demo" : "live"; guardarAuto(a); pintar(); });
+    if ($m.querySelector('[data-accion="autocopiarscript"]')) precargarScript().catch(() => { /* se reintenta al tocar */ });
     const g = document.getElementById("m-auto-guardar");
     if (g) g.addEventListener("click", () => {
       const a = autoCfg(), c = configIphone();
@@ -542,14 +590,24 @@
     }
     if (accion === "autopegartexto") { const t = document.getElementById("m-auto-pegado"); apuntarCompraIphone(t ? t.value : ""); return; }
     if (accion === "autocopiarscript") {
-      try {
-        const r = await fetch(new URL("vigia-compra.js", location.href).href.split("#")[0] + "?t=" + Date.now(), { cache: "no-store" });
-        const txt = await r.text();
-        if (!r.ok || !txt.includes("VIGIA")) throw new Error("no descargado");
-        await navigator.clipboard.writeText(txt);
-        aviso = "Script copiado. Pégalo en Scriptable («+») y llámalo «Vigia Compra».";
-      } catch (e) { aviso = "No he podido copiarlo. Ábrelo y cópialo a mano: " + new URL("vigia-compra.js", location.href).href.split("#")[0]; }
-      pintar(); window.scrollTo({ top: 0, behavior: "smooth" });
+      // Nada de await antes de copiar: copiarScript() lanza la copia en este mismo toque.
+      let ok = false;
+      try { ok = await copiarScript(); } catch (e) { ok = false; }
+      if (ok) {
+        scriptAMano = false;
+        aviso = `Script copiado ✓. En Scriptable: si ya tienes «${NOMBRE_SCRIPT}», tócale los tres puntos (…) → mantén pulsado el texto → Select All → Paste → Done. Si no, «+» → pega → llámalo «${NOMBRE_SCRIPT}».`;
+        pintar(); window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      try { await precargarScript(); } catch (e) { /* sin conexión */ }
+      if (scriptTxt) { scriptAMano = true; abiertos.add("auto-config"); pintar(); const t = document.getElementById("m-auto-script"); if (t) t.scrollIntoView({ block: "center" }); }
+      else { aviso = "No he podido descargar el script (¿sin conexión?). Vuelve a intentarlo en un momento."; pintar(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+      return;
+    }
+    if (accion === "autoseleccionarscript") {
+      const t = document.getElementById("m-auto-script");
+      if (t) { t.focus(); t.select(); try { t.setSelectionRange(0, t.value.length); } catch (e) { /* nada */ } }
+      return;
     }
   }
 

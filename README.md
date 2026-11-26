@@ -392,7 +392,10 @@ las 18:30 y cada vez que abres una app que usas mucho. El atajo solo abre Script
 secciones (tus %) y empresas con la MISMA regla que «Este mes» (`planCompra`: a partes iguales, sin pasar del
 tope por empresa contando lo que ya tienes; una sección en pausa no se invierte) y lanza una orden de compra a
 mercado por empresa. **Solo compra: nunca vende.** Gasta el 98 % (margen para subidas y la comisión de cambio),
-acciones con 3 decimales, nada por debajo de 1 €. La clave de Trading 212 está en el llavero del iPhone.
+acciones con 3 decimales, nada por debajo de 1 €. La clave de Trading 212 está en el llavero del iPhone. Se pide
+en dos pasos (API key y luego API secret), cada uno con un botón «Pegar» que lee lo copiado, y se comprueba al
+momento sin comprar nada: se manda a Trading 212 una orden vacía (sin empresa ni cantidad), que siempre rechaza;
+si la rechaza por la orden (400) la clave vale, si es por la clave (401/403) avisa.
 Salvaguardas: una sola compra por mes y cuenta (la marca se guarda antes de enviar; si algo se corta, no
 repite), candado contra ejecuciones simultáneas, corta si Trading 212 rechaza la clave (y reintenta otro día),
 reintenta una vez si pide esperar, no repite una orden sin respuesta, avisa si el día 5 aún no hay lista, pide

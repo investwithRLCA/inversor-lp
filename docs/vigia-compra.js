@@ -15,7 +15,7 @@
 // Tu importe, tu reparto y lo que ya tienes llegan desde Vigía («Guardar en el iPhone») y se guardan
 // solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 3;
+const VERSION = 4;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -336,15 +336,19 @@ async function comprarSinCandado(manual) {
     marcarMes(mes);
     return "cero";
   }
-  const auth = Keychain.contains(claveLlavero(ent)) ? Keychain.get(claveLlavero(ent)) : null;
+  let auth = leerClave(ent);
   if (!auth && !manual && leerJSON("claves.json", {})[ent]) {
     // La clave está guardada pero el llavero no se puede leer ahora (iPhone bloqueado):
     // no se avisa ni se marca nada; la próxima ejecución con el iPhone en uso comprará.
     return "bloqueado";
   }
+  if (!auth && manual) {
+    // Con el script abierto a mano: la pide y, si la guardas, sigue con la compra.
+    if (await pedirClave(ent)) auth = leerClave(ent);
+    if (!auth) return "sinclave";
+  }
   if (!auth) {
     await avisarUnaVezAlDia("sinclave:" + ent, "Vigía: falta la clave de Trading 212", `Abre Scriptable → «Vigia Compra» → «Poner o cambiar la clave» (${NOMBRE_ENTORNO[ent]}).`);
-    if (manual) await pedirClave(ent);
     return "sinclave";
   }
   const plan = planCompra(lista, conf, mes);
@@ -397,28 +401,110 @@ async function comprarSinCandado(manual) {
   return "hecho";
 }
 
-// ───────────── otras acciones ─────────────
+// ───────────── clave de Trading 212 ─────────────
+function leerClave(ent) {
+  try { return Keychain.contains(claveLlavero(ent)) ? Keychain.get(claveLlavero(ent)) || null : null; } catch (e) { return null; }
+}
+/** Quita los espacios y saltos de línea que se cuelan al copiar. */
+const limpiarDato = (v) => String(v == null ? "" : v).replace(/\s+/g, "");
+const taparDato = (v) => (v.length > 10 ? `${v.slice(0, 4)}…${v.slice(-4)}` : "…") + ` (${v.length} caracteres)`;
+/** ¿Puede ser una API key o un secret? Solo descarta lo que claramente no lo es (un enlace, el script…). */
+const pareceDato = (v) => v.length >= 8 && v.length <= 400 && !/:\/\/|[{}<>"]|^VIGIA/i.test(v);
+
+/** Un dato por pantalla. Si dejas el campo vacío, usa lo que tengas copiado (así no hay que pegar en
+ *  el campo). Devuelve el texto limpio, "" si no había nada, o null si cancelas. */
+async function pedirDato(titulo, mensaje, campo) {
+  const a = new Alert();
+  a.title = titulo;
+  a.message = mensaje;
+  a.addTextField(campo, "");
+  a.addAction("Pegar");
+  a.addCancelAction("Cancelar");
+  if ((await a.present()) !== 0) return null;
+  const escrito = limpiarDato(a.textFieldValue(0));
+  if (escrito) return escrito;
+  let copiado = "";
+  try { copiado = Pasteboard.pasteString() || ""; } catch (e) { copiado = ""; }
+  return limpiarDato(copiado);
+}
+
+/** Comprueba la clave SIN comprar nada: manda a Trading 212 una orden vacía (sin empresa ni cantidad),
+ *  que siempre rechaza. Si la rechaza por la orden (400), la clave es buena y puede comprar; si la
+ *  rechaza por la clave, 401 (no la reconoce) o 403 (le falta el permiso). */
+async function probarClave(ent, auth) {
+  const r = new Request(API[ent] + "/api/v0/equity/orders/market");
+  r.method = "POST";
+  r.headers = { "Authorization": "Basic " + auth, "Content-Type": "application/json" };
+  r.body = "{}";
+  r.timeoutInterval = 15;
+  try { await r.loadString(); } catch (e) { return "sinred"; }
+  const st = (r.response && r.response.statusCode) || 0;
+  if (st === 401) return "mala";
+  if (st === 403) return "sinpermiso";
+  if (st === 400 || st === 422) return "ok";
+  return "sincomprobar";
+}
+
+/** Pide la API key y el API secret de una cuenta, en dos pasos, y los guarda en el llavero del iPhone.
+ *  Devuelve true si se guardó. */
 async function pedirClave(entPreferido) {
+  if (!config.runsInApp) return false;
   let ent = entPreferido;
   if (!ent) {
     const r = await dialogo("¿Qué clave?", "Una clave para cada cuenta de Trading 212.", ["Cuenta real", "Cuenta Practice (prueba)"]);
-    if (r < 0) return;
+    if (r < 0) return false;
     ent = r === 0 ? "live" : "demo";
   }
-  const a = new Alert();
-  a.title = `Clave de Trading 212 · ${NOMBRE_ENTORNO[ent]}`;
-  a.message = "Trading 212 → Settings → API (Beta) → generar clave con el permiso «Orders: execute». Pega aquí la clave y el secreto. Se guardan solo en el llavero de este iPhone.";
-  a.addSecureTextField("Clave (API key)", "");
-  a.addSecureTextField("Secreto (API secret)", "");
-  a.addAction("Guardar");
-  a.addCancelAction("Cancelar");
-  if ((await a.present()) !== 0) return;
-  const k = String(a.textFieldValue(0) || "").trim(), s = String(a.textFieldValue(1) || "").trim();
-  if (!k || !s) { await dialogo("Falta algo", "Hacen falta la clave y el secreto.", ["OK"], false); return; }
-  Keychain.set(claveLlavero(ent), Data.fromString(k + ":" + s).toBase64String());
-  guardarJSON("claves.json", { ...leerJSON("claves.json", {}), [ent]: true });
-  await dialogo("Clave guardada ✓", `Guardada para la ${NOMBRE_ENTORNO[ent]}.`, ["OK"], false);
+  const cuenta = ent === "demo" ? "cuenta Practice" : "cuenta real";
+  const donde = `Trading 212 (${cuenta}) → Settings → API (Beta): clave con el permiso «Orders: execute».`;
+  for (let intento = 0; intento < 5; intento++) {
+    let clave = null, secreto = null;
+    for (let n = 0; !clave && n < 10; n++) {
+      const v = await pedirDato("Clave de Trading 212 · paso 1 de 2",
+        `${donde}\n\nCopia la API KEY, vuelve aquí y pulsa «Pegar».\n(También puedes pegarla o escribirla en el campo.)`, "API key");
+      if (v === null) return false;
+      const sep = v.indexOf(":");
+      if (sep > 0 && !v.includes("://") && pareceDato(v.slice(0, sep)) && pareceDato(v.slice(sep + 1))) {
+        clave = v.slice(0, sep); secreto = v.slice(sep + 1);           // copiaste «clave:secreto» de una vez
+        break;
+      }
+      if (pareceDato(v)) { clave = v; break; }
+      const r = await dialogo("Eso no es la API key", v ? `Lo que hay copiado no parece una clave: ${taparDato(v)}. Cópiala otra vez en Trading 212.` : "No hay nada copiado ni escrito. Copia la API key en Trading 212.", ["Repetir"]);
+      if (r !== 0) return false;
+    }
+    for (let n = 0; clave && !secreto && n < 10; n++) {
+      const v = await pedirDato("Clave de Trading 212 · paso 2 de 2",
+        `API key ✓ ${taparDato(clave)}\n\nAhora copia el API SECRET, vuelve aquí y pulsa «Pegar».`, "API secret");
+      if (v === null) return false;
+      let problema = null;
+      if (v === clave) problema = "Has pegado la API key otra vez. Copia el API secret (el otro dato) en Trading 212.";
+      else if (!pareceDato(v)) problema = v ? `Lo que hay copiado no parece el secret: ${taparDato(v)}. Cópialo otra vez.` : "No hay nada copiado ni escrito. Copia el API secret en Trading 212.";
+      if (!problema) { secreto = v; break; }
+      const r = await dialogo("Eso no es el API secret", problema, ["Repetir"]);
+      if (r !== 0) return false;
+    }
+    if (!clave || !secreto) return false;
+    const auth = Data.fromString(clave + ":" + secreto).toBase64String();
+    const prueba = await probarClave(ent, auth);
+    if (prueba === "mala" || prueba === "sinpermiso") {
+      const txt = prueba === "mala"
+        ? `Trading 212 no reconoce esta clave en la ${cuenta}. Mira que sea de esa cuenta (la real y la Practice tienen claves distintas) y que la API key y el secret sean de la misma clave.`
+        : "Trading 212 reconoce la clave, pero no le deja comprar: le falta el permiso «Orders: execute» (o tiene limitadas las IP).";
+      const r = await dialogo("La clave no funciona", txt, ["Repetir", "Guardarla igualmente"]);
+      if (r === 0) continue;
+      if (r !== 1) return false;
+    }
+    Keychain.set(claveLlavero(ent), auth);
+    guardarJSON("claves.json", { ...leerJSON("claves.json", {}), [ent]: true });
+    const nota = prueba === "ok" ? "Trading 212 la acepta ✓ (comprobado sin comprar nada)."
+      : prueba === "sinred" || prueba === "sincomprobar" ? "No he podido comprobarla ahora con Trading 212; se verá en la primera compra." : "";
+    await dialogo("Clave guardada ✓", `Guardada en el llavero de este iPhone para la ${cuenta}. ${nota}`.trim(), ["OK"], false);
+    return true;
+  }
+  return false;
 }
+
+// ───────────── otras acciones ─────────────
 
 function validarConfig(c) {
   if (!c || typeof c !== "object" || c.v !== 1) return "formato desconocido";
