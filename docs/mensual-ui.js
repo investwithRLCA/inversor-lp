@@ -569,7 +569,7 @@
     if (!lista.length) return "";
     const filas = lista.map((x) => `<li><strong>${esc(x.ticker)}</strong>${x.nombre ? ` · ${esc(x.nombre)}` : ""}${x.veredicto && x.veredicto !== "SIN_TESIS" ? ` <span class="pill v-${esc(x.veredicto)}">${esc(String(x.veredicto).replace("_", " "))}</span>` : ""}${(x.por_que || []).length ? `<br><span class="m-dim">${esc(x.por_que.join(" · "))}</span>` : ""}</li>`).join("");
     return `<div class="m-no-t212"><strong>Buenas, pero no están en Trading 212 (${lista.length})</strong>
-      <p class="m-dim">Cumplen todo y habrían entrado, pero Trading 212 no las tiene: <strong>no se invierten</strong> (ni aquí, ni en la tarta, ni en la compra automática). Su plaza la ocupa la siguiente mejor.</p>
+      <p class="m-dim">Cumplen todo y habrían entrado, pero en Trading 212 no se pueden comprar (no están o son de solo lectura): <strong>no se invierten</strong> (ni aquí, ni en la tarta, ni en la compra automática). Su plaza la ocupa la siguiente mejor.</p>
       <ul>${filas}</ul></div>`;
   }
   /** Aviso si este mes el informe no pudo comprobar qué hay en Trading 212. */

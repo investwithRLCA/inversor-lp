@@ -629,7 +629,7 @@ def generar_seccion(
                 no_t212.append({"ticker": x["fila"]["ticker"], "nombre": x["fila"].get("nombre") or "",
                                 "sector": x["fila"].get("sector") or "", "precio": round(x["precio"], 2),
                                 "puntos": x["puntos"], "por_que": razones(x["an"], x["emp"], x["rend"], ref)[:2],
-                                "motivo": "no está en Trading 212"})
+                                "motivo": "no se puede comprar en Trading 212 (no está o es de solo lectura)"})
                 continue
             t = tarjeta(x)
             if tk:

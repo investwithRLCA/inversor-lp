@@ -172,7 +172,7 @@ def _ficha_no_t212(reg: dict) -> dict:
     razones = reg.get("razones") or []
     return {"ticker": reg["ticker"], "nombre": reg.get("nombre") or "", "sector": reg.get("sector") or "",
             "veredicto": reg.get("veredicto"), "precio": reg.get("precio"), "puntos": reg.get("puntos"),
-            "por_que": razones[:2], "motivo": "no está en Trading 212"}
+            "por_que": razones[:2], "motivo": "no se puede comprar en Trading 212 (no está o es de solo lectura)"}
 
 
 def generar_informe(
@@ -827,7 +827,8 @@ def issue_markdown(inf: dict, url_dashboard: str | None = None) -> str:
     t2 = inf.get("t212") or {}
     if fuera:
         A("### 🚫 Buenas, pero no están en Trading 212\n")
-        A("Cumplen todos los criterios y habrían entrado, pero Trading 212 no las tiene: **no se invierten** "
+        A("Cumplen todos los criterios y habrían entrado, pero en Trading 212 no se pueden comprar (no están o son de "
+          "solo lectura): **no se invierten** "
           "(ni en «Este mes», ni en la tarta, ni en la compra automática). Su plaza la ocupa la siguiente mejor.\n")
         for sec, x in fuera:
             por_que = "; ".join(x.get("por_que") or [])

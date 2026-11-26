@@ -61,9 +61,23 @@ def manual_no_disponibles() -> set[str]:
     return out
 
 
+def solo_lectura(i: dict) -> bool:
+    """Valor de solo lectura (no se puede abrir posición): Trading 212 lo marca con
+    maxOpenQuantity = 0. Comprobado con el catálogo real (nov. 2026): warrants muertos y
+    alguna acción en ese estado. Los que tu cuenta no puede operar en absoluto ni aparecen."""
+    q = i.get("maxOpenQuantity")
+    return isinstance(q, (int, float)) and q <= 0
+
+
+def solo_lectura_ee_uu(instrumentos: list[dict]) -> list[str]:
+    return sorted(str(i.get("ticker")) for i in instrumentos or []
+                  if isinstance(i, dict) and str(i.get("ticker") or "").endswith("_US_EQ") and solo_lectura(i))
+
+
 def indice_de(instrumentos: list[dict]) -> dict[str, str]:
-    """{símbolo normalizado: ticker de Trading 212} de las acciones y ETF de EE. UU. (en dólares).
-    Si el símbolo del ticker y el «shortName» difieren, vale cualquiera de los dos; manda el del ticker."""
+    """{símbolo normalizado: ticker de Trading 212} de las acciones y ETF de EE. UU. (en dólares)
+    que se pueden comprar. Si el símbolo del ticker y el «shortName» difieren, vale cualquiera de
+    los dos; manda el del ticker. Los de solo lectura NO entran (como si no estuvieran)."""
     por_ticker: dict[str, str] = {}
     por_nombre: dict[str, str] = {}
     for i in instrumentos or []:
@@ -73,6 +87,8 @@ def indice_de(instrumentos: list[dict]) -> dict[str, str]:
         if not t.endswith("_US_EQ") or (i.get("currencyCode") or "USD") != "USD":
             continue
         if i.get("type") not in (None, "STOCK", "ETF"):
+            continue
+        if solo_lectura(i):
             continue
         base = normalizar(t[: -len("_US_EQ")])
         if base:
@@ -100,8 +116,10 @@ class Disponibilidad:
     o None si NO está (y entonces no se invierte)."""
 
     def __init__(self, indice: dict[str, str] | None, manual: set[str] | None = None,
-                 fuente: str = "", actualizado: str | None = None, aviso: str | None = None):
+                 fuente: str = "", actualizado: str | None = None, aviso: str | None = None,
+                 solo_lectura: list[str] | None = None):
         self.indice = indice
+        self.solo_lectura = list(solo_lectura or [])
         self.manual = {normalizar(x) for x in (manual or set())}
         self.fuente = fuente
         self.actualizado = actualizado
@@ -121,27 +139,29 @@ class Disponibilidad:
 
     def resumen(self) -> dict:
         return {"comprobado": self.comprobado, "fuente": self.fuente, "actualizado": self.actualizado,
-                "n_ee_uu": len(self.indice) if self.indice is not None else None,
+                "n_ee_uu": len(set(self.indice.values())) if self.indice is not None else None,
+                "n_solo_lectura": len(self.solo_lectura),
                 "manual": sorted(self.manual), "aviso": self.aviso}
 
 
-def leer_cache(hoy: date | None = None) -> tuple[dict[str, str] | None, str | None]:
+def leer_cache(hoy: date | None = None) -> tuple[dict[str, str] | None, str | None, list[str]]:
     """La última lista buena guardada, si no es demasiado vieja."""
     hoy = hoy or date.today()
     try:
         d = json.loads(CACHE.read_text(encoding="utf-8"))
         f = date.fromisoformat(d["actualizado"])
         idx = d["indice"]
-        if isinstance(idx, dict) and len(idx) >= MIN_EE_UU and (hoy - f).days <= MAX_DIAS_CACHE:
-            return idx, d["actualizado"]
+        if isinstance(idx, dict) and len(set(idx.values())) >= MIN_EE_UU and (hoy - f).days <= MAX_DIAS_CACHE:
+            return idx, d["actualizado"], list(d.get("solo_lectura") or [])
     except Exception:  # noqa: BLE001
         pass
-    return None, None
+    return None, None, []
 
 
-def guardar_cache(indice: dict[str, str], hoy: date | None = None) -> None:
+def guardar_cache(indice: dict[str, str], hoy: date | None = None, solo_lectura: list[str] | None = None) -> None:
     hoy = hoy or date.today()
     CACHE.write_text(json.dumps({"actualizado": hoy.isoformat(), "fuente": "API de Trading 212 (metadata/instruments)",
+                                 "solo_lectura": sorted(solo_lectura or []),
                                  "indice": dict(sorted(indice.items()))}, ensure_ascii=False, indent=0),
                      encoding="utf-8")
 
@@ -156,19 +176,21 @@ def cargar(hoy: date | None = None, *, online: bool = True, f_descargar=None) ->
         try:
             inst = (f_descargar or descargar)(clave, secreto)
             idx = indice_de(inst)
-            if len(idx) < MIN_EE_UU:
-                raise RuntimeError(f"solo {len(idx)} acciones de EE. UU. en la respuesta")
-            guardar_cache(idx, hoy)
-            return Disponibilidad(idx, manual, "Trading 212 (consultado hoy)", hoy.isoformat())
+            n = len(set(idx.values()))
+            if n < MIN_EE_UU:
+                raise RuntimeError(f"solo {n} acciones de EE. UU. en la respuesta")
+            sl = solo_lectura_ee_uu(inst)
+            guardar_cache(idx, hoy, sl)
+            return Disponibilidad(idx, manual, "Trading 212 (consultado hoy)", hoy.isoformat(), solo_lectura=sl)
         except Exception as e:  # noqa: BLE001
             log.warning("Trading 212 no responde: %s", e)
             aviso = f"No se pudo consultar Trading 212 ({e})"
     elif online:
         aviso = "Falta la clave de solo lectura de Trading 212 (secretos T212_METADATA_KEY y T212_METADATA_SECRET)"
-    idx, f = leer_cache(hoy)
+    idx, f, sl = leer_cache(hoy)
     if idx is not None:
         return Disponibilidad(idx, manual, f"lista de Trading 212 guardada el {f}", f,
-                              (aviso + ": se usa la última lista guardada.") if aviso else None)
+                              (aviso + ": se usa la última lista guardada.") if aviso else None, solo_lectura=sl)
     return Disponibilidad(None, manual, "sin comprobar", None,
                           (aviso or "Sin lista de Trading 212") +
                           ": no se ha podido comprobar qué empresas están en Trading 212; "
@@ -209,7 +231,8 @@ def main() -> int:
     d = cargar()
     r = d.resumen()
     print(f"Trading 212: {'comprobado' if r['comprobado'] else 'SIN COMPROBAR'} · {r['fuente']} · "
-          f"{r['n_ee_uu'] or 0} acciones/ETF de EE. UU." + (f" · {r['aviso']}" if r["aviso"] else ""))
+          f"{r['n_ee_uu'] or 0} acciones/ETF de EE. UU. que se pueden comprar · {r['n_solo_lectura']} de solo lectura (excluidas)"
+          + (f" · {r['aviso']}" if r["aviso"] else ""))
     return 0 if d.comprobado else 1
 
 
