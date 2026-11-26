@@ -15,7 +15,7 @@
 // Una compra por mes y cuenta (si quieres otra, te lo pregunta). Tu importe, tu reparto y lo que ya
 // tienes se guardan solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 7;
+const VERSION = 8;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -280,6 +280,64 @@ async function enviarOrden(ent, auth, orden) {
   return { ok: false, status: st, motivo: String(motivo).slice(0, 140) };
 }
 
+/** Lista de Trading 212 (GET). {st, j}: st = 0 si no hubo respuesta. */
+async function leerTrading212(ent, auth, ruta) {
+  const r = new Request(API[ent] + ruta);
+  r.headers = { "Authorization": "Basic " + auth, "Accept": "application/json" };
+  r.timeoutInterval = 30;
+  let txt;
+  try { txt = await r.loadString(); } catch (e) { return { st: 0, j: null }; }
+  let j = null;
+  try { j = JSON.parse(txt); } catch (e) { j = null; }
+  return { st: (r.response && r.response.statusCode) || 0, j };
+}
+/** Una orden de Trading 212 «aplanada» (vale para {…} y para {order: {…}, fill: {…}}). */
+function aplanarOrden(x) {
+  if (!x || typeof x !== "object") return {};
+  return { ...(x.fill && typeof x.fill === "object" ? x.fill : {}), ...(x.order && typeof x.order === "object" ? x.order : {}), ...x };
+}
+const fechaOrden = (o) => Date.parse(o.creationTime || o.dateCreated || o.createdAt || "");
+const cantidadOrden = (o) => [o.quantity, o.orderedQuantity, o.filledQuantity].map(Number).find((v) => isFinite(v) && v > 0);
+/** ¿Es la orden que mandamos? Mismo valor, misma cantidad y creada desde que se envió (con 2 min de margen). */
+function esLaOrden(x, d, exigirFecha) {
+  const o = aplanarOrden(x);
+  if (String(o.ticker || "") !== d.ticker) return false;
+  const q = cantidadOrden(o);
+  if (q == null || Math.abs(q - d.cantidad) > 1e-6) return false;
+  const t = fechaOrden(o);
+  if (!isFinite(t)) return !exigirFecha;
+  return t >= (d.enviada || 0) - 2 * 60 * 1000;
+}
+/** Pregunta a Trading 212 si entraron las órdenes que no contestó: primero las pendientes (con la bolsa cerrada
+ *  se quedan ahí) y luego el historial de órdenes (con la bolsa abierta se ejecutan al momento). Hace falta que
+ *  la clave tenga también los permisos de SOLO LECTURA «Orders: read» y «History: orders»; si no, no se sabe.
+ *  Devuelve un Map orden → "si" | "no" | "nose". «no» solo si Trading 212 contestó a todo y no la encontró. */
+async function comprobarEnTrading212(ent, auth, dudosas) {
+  const res = new Map(dudosas.map((d) => [d, "nose"]));
+  await esperar(6000);                       // que le dé tiempo a apuntarla (y límite: 1 consulta cada 5 s)
+  await mirarUnaVez(ent, auth, dudosas, res);
+  const no = dudosas.filter((d) => res.get(d) === "no");
+  if (no.length) { await esperar(10000); await mirarUnaVez(ent, auth, no, res); }   // otra mirada antes de volver a comprar
+  return res;
+}
+async function mirarUnaVez(ent, auth, dudosas, res) {
+  dudosas.forEach((d) => res.set(d, "nose"));
+  const p = await leerTrading212(ent, auth, "/api/v0/equity/orders");
+  if (p.st !== 200 || !Array.isArray(p.j)) return;
+  let primera = true;
+  for (const d of dudosas) {
+    if (p.j.some((x) => esLaOrden(x, d, false))) { res.set(d, "si"); continue; }
+    if (!primera) await esperar(11000);     // historial: 6 consultas por minuto
+    primera = false;
+    const h = await leerTrading212(ent, auth, `/api/v0/equity/history/orders?ticker=${encodeURIComponent(d.ticker)}&limit=20`);
+    const filas = h.st === 200 ? (Array.isArray(h.j) ? h.j : h.j && Array.isArray(h.j.items) ? h.j.items : null) : null;
+    if (!filas) continue;                                                   // sin permiso o respuesta rara: no se sabe
+    if (filas.some((x) => esLaOrden(x, d, true))) { res.set(d, "si"); continue; }
+    const legible = !filas.length || filas.some((x) => { const o = aplanarOrden(x); return o.ticker && isFinite(fechaOrden(o)); });
+    if (legible) res.set(d, "no");
+  }
+}
+
 /** Decimales que pide Trading 212 en su respuesta («invalid quantity precision 2» → 2), o null. */
 function decimalesPedidos(motivo) {
   const m = /precision\D{0,20}(\d)/i.exec(String(motivo || ""));
@@ -409,7 +467,8 @@ async function comprarSinCandado(manual) {
     return "nada";
   }
   if (manual) {
-    const r = await dialogo("¿Comprar ahora?", resumenPlan(plan, lista, ent), ["Comprar"]);
+    const r = await dialogo("¿Comprar ahora?", resumenPlan(plan, lista, ent) +
+      "\n\nAl pulsar «Comprar» tarda unos segundos: no salgas de Scriptable ni bloquees el móvil hasta ver el resultado.", ["Comprar"]);
     if (r !== 0) return "cancelado";
   }
   // La marca se guarda ANTES de enviar: si algo se corta a mitad, nunca se compra dos veces.
@@ -427,8 +486,9 @@ async function comprarSinCandado(manual) {
       resultados.push({ ...o, ok: false, motivo: `Trading 212 solo admite ${sabidos === 0 ? "acciones enteras" : `${sabidos} decimales`} en esta empresa y el importe no llega` });
       continue;
     }
+    let enviada = Date.now();
     let res = await enviarOrden(ent, auth, o);
-    if (!res.ok && res.status === 429) { await esperar(3000); res = await enviarOrden(ent, auth, o); }
+    if (!res.ok && res.status === 429) { await esperar(3000); enviada = Date.now(); res = await enviarOrden(ent, auth, o); }
     if (!res.ok && (res.status === 401 || res.status === 403)) corte = `Trading 212 rechaza la clave (${res.status})`;
     // Rechazada por los decimales (p. ej. «invalid quantity precision 2»): se recorta y se reintenta una vez.
     // Es seguro: una orden rechazada (400) no se ha creado.
@@ -439,21 +499,36 @@ async function comprarSinCandado(manual) {
       const o2 = conDecimales(o, dec);
       if (o2.cantidad > 0 && o2.eur >= MIN_ORDEN_EUR) {
         o = o2;
+        enviada = Date.now();
         res = await enviarOrden(ent, auth, o);
         if (!res.ok && res.status === 429) { await esperar(3000); res = await enviarOrden(ent, auth, o); }
       } else {
         res = { ok: false, status: 400, motivo: `Trading 212 solo admite ${dec === 0 ? "acciones enteras" : `${dec} decimales`} en esta empresa y el importe no llega` };
       }
     }
-    resultados.push({ ...o, ...res });
+    resultados.push({ ...o, ...res, enviada });
   }
-  // Sin respuesta de Trading 212 (cobertura, lentitud): no se sabe si se compró y repetirla a ciegas podría
-  // comprar dos veces. Con el script abierto, te pregunta: lo miras en Trading 212 y decides.
+  // Sin respuesta de Trading 212 (cobertura, móvil bloqueado…): no se sabe si se compró, y repetirla a ciegas
+  // podría comprar dos veces. Primero se le pregunta a Trading 212 (si la clave tiene permiso de lectura);
+  // si no se puede saber, y el script está abierto, te pregunta a ti.
+  const sinRespuesta = resultados.filter((r) => !r.ok && r.dudosa);
+  if (sinRespuesta.length) {
+    const vistas = await comprobarEnTrading212(ent, auth, sinRespuesta);
+    for (const d of sinRespuesta) {
+      if (vistas.get(d) === "si") Object.assign(d, { ok: true, dudosa: false, confirmada: true, motivo: null });
+      else if (vistas.get(d) === "no") {
+        let res = await enviarOrden(ent, auth, d);
+        if (!res.ok && res.status === 429) { await esperar(3000); res = await enviarOrden(ent, auth, d); }
+        Object.assign(d, res.ok ? { ok: true, dudosa: false, id: res.id, motivo: null, repetida: true } : { ...res });
+      }
+    }
+  }
   if (manual) {
     for (const d of resultados.filter((r) => !r.ok && r.dudosa)) {
       const r = await dialogo(`¿Se ha comprado ${d.empresa}?`,
         `Trading 212 no contestó al comprar ${d.empresa} (${acciones(d.cantidad)} acc. ≈ ${euros(d.eur)}), así que no sé si se hizo.\n\n` +
-        `Abre Trading 212 (${NOMBRE_ENTORNO[ent]}) y mira si hay una orden o una compra de ${d.empresa} de hoy. Luego vuelve aquí.`,
+        `Abre Trading 212 (${NOMBRE_ENTORNO[ent]}) y busca ${d.empresa}: en tu cartera y en las órdenes PENDIENTES (con la bolsa cerrada, las compras se quedan pendientes). Luego vuelve aquí.\n\n` +
+        "Si no estás seguro, elige «No lo sé»: es mejor apuntarla después a mano que comprarla dos veces.",
         ["Sí, está", "No está: comprarla ahora", "No lo sé"], false);
       if (r === 0) Object.assign(d, { ok: true, dudosa: false, confirmada: true, motivo: null });
       else if (r === 1) {
@@ -488,6 +563,8 @@ async function comprarSinCandado(manual) {
   const gastado = buenas.reduce((s, r) => s + r.eur, 0);
   let cuerpo = `Compradas ${buenas.length} de ${resultados.length} · ≈ ${euros(gastado)} (${NOMBRE_ENTORNO[ent]}).`;
   if (malas.length) cuerpo += ` Fallaron: ${malas.map((r) => `${r.empresa} (${r.motivo})`).join("; ")}.`;
+  const repetidas = buenas.filter((r) => r.repetida);
+  if (repetidas.length) cuerpo += ` Comprobado en Trading 212 que no habían entrado y enviadas otra vez: ${repetidas.map((r) => r.empresa).join(", ")}.`;
   if (dudosas.length) cuerpo += ` Sin respuesta de Trading 212 (mira si se compraron; si sí, apúntalas a mano en Vigía): ${dudosas.map((r) => r.empresa).join(", ")}.`;
   if (manual) {
     if (ent === "live") Pasteboard.copy(PREFIJO_COMPRA + b64url(compra));
@@ -557,7 +634,7 @@ async function pedirClave(entPreferido) {
     ent = r === 0 ? "live" : "demo";
   }
   const cuenta = ent === "demo" ? "cuenta Practice" : "cuenta real";
-  const donde = `Trading 212 (${cuenta}) → Settings → API (Beta): clave con el permiso «Orders: execute».`;
+  const donde = `Trading 212 (${cuenta}) → Settings → API (Beta): clave con el permiso «Orders: execute» (y, mejor, también «Orders: read» y «History: orders», de solo lectura).`;
   for (let intento = 0; intento < 5; intento++) {
     let clave = null, secreto = null;
     for (let n = 0; !clave && n < 10; n++) {

@@ -397,7 +397,10 @@ tope por empresa contando lo que ya tienes; una sección en pausa no se invierte
 para subidas y la comisión de cambio), acciones con 3 decimales, nada por debajo de 1 €; si la lista tiene más de
 3 días, lo advierte. Al terminar enseña el resultado (y el motivo de Trading 212 si alguna orden falla) y deja la
 compra copiada: en Vigía, «Pegar compra del iPhone» la apunta en la cartera (sin duplicar; las de prueba no se
-apuntan). La clave de Trading 212 (solo permiso «Orders: execute») está en el llavero del iPhone. Se pide en dos
+apuntan). La clave de Trading 212 está en el llavero del iPhone: permiso «Orders: execute» y, recomendado, los de
+solo lectura «Orders: read» e «History: orders». Con ellos, si Trading 212 no contesta a una orden (cobertura, móvil
+bloqueado), el iPhone la busca en las órdenes pendientes y en el historial —dos veces, con 10 s entre medias— y
+solo la vuelve a mandar si de verdad no está; si no se puede saber, te pregunta. Nunca la repite a ciegas. Se pide en dos
 pasos (API key y luego API secret), cada uno con un botón «Pegar» que lee lo copiado, y se comprueba al momento
 sin comprar nada: se manda a Trading 212 una orden vacía (sin empresa ni cantidad), que siempre rechaza; si la
 rechaza por la orden (400) la clave vale, si es por la clave (401/403) avisa.
