@@ -1,2 +1,6 @@
-# Tickers que Trading 212 no tiene (uno por línea). La compra automática los quita y reparte su peso.
-WKC
+# Empresas que NO se invierten nunca, aunque estén en Trading 212 (una por línea, ticker de la SEC).
+# Lo normal es dejarla vacía: el informe mensual ya comprueba cada empresa contra el catálogo de
+# Trading 212 (backend/mensual/trading212.py) y usa su código exacto. Úsala solo para bloquear a mano.
+#
+# (WKC estaba aquí porque «WKC_US_EQ» no existe; Trading 212 la tiene con su código antiguo,
+# INT_US_EQ, y el catálogo ya lo resuelve.)
