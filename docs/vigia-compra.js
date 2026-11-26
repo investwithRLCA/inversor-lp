@@ -15,7 +15,7 @@
 // Una compra por mes y cuenta (si quieres otra, te lo pregunta). Tu importe, tu reparto y lo que ya
 // tienes se guardan solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 5;
+const VERSION = 6;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -280,6 +280,23 @@ async function enviarOrden(ent, auth, orden) {
   return { ok: false, status: st, motivo: String(motivo).slice(0, 140) };
 }
 
+/** Decimales que pide Trading 212 en su respuesta («invalid quantity precision 2» → 2), o null. */
+function decimalesPedidos(motivo) {
+  const m = /precision\D{0,20}(\d)/i.exec(String(motivo || ""));
+  return m ? Number(m[1]) : null;
+}
+function decimalesDe(q) {
+  const t = String(q);
+  return t.includes(".") ? t.split(".")[1].length : 0;
+}
+/** La misma orden con menos decimales (redondeando hacia abajo: nunca se gasta de más). */
+function conDecimales(o, dec) {
+  const f = Math.pow(10, dec);
+  const cantidad = Number((Math.floor(o.cantidad * f + 1e-9) / f).toFixed(dec));
+  const k = o.cantidad > 0 ? cantidad / o.cantidad : 0;
+  return { ...o, cantidad, eur: Math.round(o.eur * k * 100) / 100, usd: o.usd != null ? Math.round(o.usd * k * 100) / 100 : o.usd };
+}
+
 // ───────────── comprar ─────────────
 // Candado: si dos ejecuciones coinciden (dos automatizaciones a la vez), solo una sigue.
 function cogerCandado() {
@@ -400,11 +417,34 @@ async function comprarSinCandado(manual) {
   marcarMes(mes);
   const resultados = [];
   let corte = null;
-  for (const o of plan.ordenes) {
+  est.decimales = est.decimales || {};          // decimales que admite cada valor (aprendidos de Trading 212)
+  for (const o0 of plan.ordenes) {
+    let o = o0;
     if (corte) { resultados.push({ ...o, ok: false, motivo: corte }); continue; }
+    const sabidos = est.decimales[o.ticker];
+    if (sabidos != null && sabidos < decimalesDe(o.cantidad)) o = conDecimales(o, sabidos);
+    if (!(o.cantidad > 0) || o.eur < MIN_ORDEN_EUR) {
+      resultados.push({ ...o, ok: false, motivo: `Trading 212 solo admite ${sabidos === 0 ? "acciones enteras" : `${sabidos} decimales`} en esta empresa y el importe no llega` });
+      continue;
+    }
     let res = await enviarOrden(ent, auth, o);
     if (!res.ok && res.status === 429) { await esperar(3000); res = await enviarOrden(ent, auth, o); }
     if (!res.ok && (res.status === 401 || res.status === 403)) corte = `Trading 212 rechaza la clave (${res.status})`;
+    // Rechazada por los decimales (p. ej. «invalid quantity precision 2»): se recorta y se reintenta una vez.
+    // Es seguro: una orden rechazada (400) no se ha creado.
+    const dec = !res.ok && res.status === 400 ? decimalesPedidos(res.motivo) : null;
+    if (dec != null && dec < decimalesDe(o.cantidad)) {
+      est.decimales[o.ticker] = dec;
+      guardarJSON("estado.json", est);
+      const o2 = conDecimales(o, dec);
+      if (o2.cantidad > 0 && o2.eur >= MIN_ORDEN_EUR) {
+        o = o2;
+        res = await enviarOrden(ent, auth, o);
+        if (!res.ok && res.status === 429) { await esperar(3000); res = await enviarOrden(ent, auth, o); }
+      } else {
+        res = { ok: false, status: 400, motivo: `Trading 212 solo admite ${dec === 0 ? "acciones enteras" : `${dec} decimales`} en esta empresa y el importe no llega` };
+      }
+    }
     resultados.push({ ...o, ...res });
   }
   const buenas = resultados.filter((r) => r.ok);
