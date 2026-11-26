@@ -1,6 +1,13 @@
 {
 "actualizado": "2026-11-26",
 "fuente": "API de Trading 212 (metadata/instruments)",
+"solo_lectura": [
+"AAMC_US_EQ",
+"CZOOW1_WAR_US_EQ",
+"CZOOWW_WAR_US_EQ",
+"CZWWW_WAR_US_EQ",
+"SKYD_WAR_US_EQ"
+],
 "indice": {
 "A": "A_US_EQ",
 "AA": "AA_US_EQ",
@@ -11,8 +18,6 @@
 "AADX": "AADX_US_EQ",
 "AAGIY": "AAGIY_US_EQ",
 "AAL": "AAL_US_EQ",
-"AAMC": "AAMC_US_EQ",
-"AAMCF": "AAMC_US_EQ",
 "AAME": "AAME_US_EQ",
 "AAMI": "BSIG_US_EQ",
 "AAN": "AAN_US_EQ",
