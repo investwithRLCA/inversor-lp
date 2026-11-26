@@ -15,7 +15,7 @@
 // Una compra por mes y cuenta (si quieres otra, te lo pregunta). Tu importe, tu reparto y lo que ya
 // tienes se guardan solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 6;
+const VERSION = 7;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -266,7 +266,7 @@ async function enviarOrden(ent, auth, orden) {
   r.method = "POST";
   r.headers = { "Authorization": "Basic " + auth, "Content-Type": "application/json" };
   r.body = JSON.stringify({ ticker: orden.ticker, quantity: orden.cantidad });
-  r.timeoutInterval = 20;
+  r.timeoutInterval = 45;          // con poca cobertura, mejor esperar: una orden sin respuesta no se puede repetir a ciegas
   let texto;
   try { texto = await r.loadString(); }
   catch (e) { return { ok: false, dudosa: true, motivo: "sin respuesta: mira en Trading 212 si se hizo" }; }
@@ -447,6 +447,22 @@ async function comprarSinCandado(manual) {
     }
     resultados.push({ ...o, ...res });
   }
+  // Sin respuesta de Trading 212 (cobertura, lentitud): no se sabe si se compró y repetirla a ciegas podría
+  // comprar dos veces. Con el script abierto, te pregunta: lo miras en Trading 212 y decides.
+  if (manual) {
+    for (const d of resultados.filter((r) => !r.ok && r.dudosa)) {
+      const r = await dialogo(`¿Se ha comprado ${d.empresa}?`,
+        `Trading 212 no contestó al comprar ${d.empresa} (${acciones(d.cantidad)} acc. ≈ ${euros(d.eur)}), así que no sé si se hizo.\n\n` +
+        `Abre Trading 212 (${NOMBRE_ENTORNO[ent]}) y mira si hay una orden o una compra de ${d.empresa} de hoy. Luego vuelve aquí.`,
+        ["Sí, está", "No está: comprarla ahora", "No lo sé"], false);
+      if (r === 0) Object.assign(d, { ok: true, dudosa: false, confirmada: true, motivo: null });
+      else if (r === 1) {
+        let res = await enviarOrden(ent, auth, d);
+        if (!res.ok && res.status === 429) { await esperar(3000); res = await enviarOrden(ent, auth, d); }
+        Object.assign(d, res.ok ? { ok: true, dudosa: false, id: res.id, motivo: null } : { ...res });
+      }
+    }
+  }
   const buenas = resultados.filter((r) => r.ok);
   const dudosas = resultados.filter((r) => !r.ok && r.dudosa);
   const malas = resultados.filter((r) => !r.ok && !r.dudosa);
@@ -472,7 +488,7 @@ async function comprarSinCandado(manual) {
   const gastado = buenas.reduce((s, r) => s + r.eur, 0);
   let cuerpo = `Compradas ${buenas.length} de ${resultados.length} · ≈ ${euros(gastado)} (${NOMBRE_ENTORNO[ent]}).`;
   if (malas.length) cuerpo += ` Fallaron: ${malas.map((r) => `${r.empresa} (${r.motivo})`).join("; ")}.`;
-  if (dudosas.length) cuerpo += ` Revisa en Trading 212: ${dudosas.map((r) => r.empresa).join(", ")}.`;
+  if (dudosas.length) cuerpo += ` Sin respuesta de Trading 212 (mira si se compraron; si sí, apúntalas a mano en Vigía): ${dudosas.map((r) => r.empresa).join(", ")}.`;
   if (manual) {
     if (ent === "live") Pasteboard.copy(PREFIJO_COMPRA + b64url(compra));
     await avisar(`Vigía: compra de ${nombreMes(mes)}`, cuerpo, URL_COPIAR);
