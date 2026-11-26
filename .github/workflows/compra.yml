@@ -2,9 +2,13 @@ name: Compra del mes (lista para el atajo del iPhone)
 
 # Publica UNA vez al mes la lista de la compra en docs/compra/lista.json (empresas de
 # cada sección con su ticker de Trading 212 y su precio de ese momento, cambio euro/dólar
-# y tope por empresa). La lee el script «Vigia Compra» del iPhone (app Scriptable), que
-# reparte tu importe del mes —decidido en Vigía y guardado solo en tu iPhone— con la misma
-# regla que Vigía y compra en Trading 212. Solo compra: nunca vende.
+# y tope por empresa) y te avisa en el móvil (app ntfy, secreto NTFY_TOPIC). Tú compras
+# cuando quieras desde Vigía con «Comprar ahora»: el script «Vigia Compra» del iPhone (app
+# Scriptable) reparte tu importe —que solo está en tu iPhone— con la misma regla que Vigía
+# y compra en Trading 212. Solo compra: nunca vende.
+#
+# Avisos al móvil: cuando la lista ya se ve en la web; los días 3 y 7 si aún no hay
+# informe del mes; con «forzar», un aviso de PRUEBA.
 #
 # Cuándo: el primer día de bolsa de EE. UU. de cada mes, a las 15:07 UTC (16:07 en
 # España en invierno, 17:07 en verano), con la bolsa abierta en verano y en invierno.
@@ -53,6 +57,7 @@ jobs:
         run: pip install -r requirements-mensual.txt
 
       - name: Generar la lista de la compra
+        id: lista
         working-directory: backend
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -65,6 +70,7 @@ jobs:
           python -m mensual.compra_t212 --salida ../docs/compra --precios-vivos $EXTRA
 
       - name: Publicarla
+        id: publicar
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -77,3 +83,19 @@ jobs:
             sleep 5
           done
           exit 1
+
+      - name: Avisar al móvil (ntfy)
+        if: always()
+        working-directory: backend
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          PUBLICADA: ${{ steps.lista.outputs.publicada }}
+          PRUEBA: ${{ steps.lista.outputs.prueba }}
+          SIN_LISTA: ${{ steps.lista.outputs.sin_lista }}
+          PUBLICAR: ${{ steps.publicar.outcome }}
+        run: |
+          # Solo se anuncia una lista si de verdad se subió (y se espera a que la web la muestre).
+          if [ -n "$PUBLICADA" ] && [ "$PUBLICAR" = "success" ]; then python3 -m mensual.avisos lista --mes "$PUBLICADA"; fi
+          if [ -n "$PRUEBA" ] && [ "$PUBLICAR" = "success" ]; then python3 -m mensual.avisos lista --mes "$PRUEBA" --prueba; fi
+          if [ -n "$SIN_LISTA" ]; then python3 -m mensual.avisos sin-lista --mes "$SIN_LISTA"; fi
+          exit 0

@@ -163,3 +163,10 @@ jobs:
             backend/informe_mensual.json
             backend/issue_mensual.md
           if-no-files-found: ignore
+
+      - name: Avisar al móvil si el informe ha fallado (ntfy)
+        if: failure()
+        working-directory: backend
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python3 -m mensual.avisos fallo-informe || true

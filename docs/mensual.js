@@ -432,7 +432,7 @@
     return out;
   }
 
-  // ───────────────────── compra automática mensual (script «Vigia Compra» del iPhone) ─────────────────────
+  // ───────────────────── compra del mes en Trading 212 (script «Vigia Compra» del iPhone) ─────────────────────
   // Vigía decide CUÁNTO (total del mes, con cambios para meses concretos) y CÓMO se reparte entre
   // secciones; el iPhone, con la lista pública del mes, reparte entre empresas con la MISMA regla
   // que «Este mes» (repartir: a partes iguales sin pasar del tope por empresa contando lo que ya

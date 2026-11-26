@@ -1,21 +1,21 @@
-// Vigía · compra mensual automática en Trading 212 — script para la app Scriptable del iPhone.
+// Vigía · compra del mes en Trading 212 — script para la app Scriptable del iPhone.
 //
-// Cómo se instala: en Vigía → Este mes → «Inversión automática» → «Copiar el script»; en Scriptable,
-// «+», pega y llama al script exactamente «Vigia Compra». No lleva ninguna clave: la pide la primera
-// vez y la guarda en el llavero de este iPhone.
+// Cómo se instala: en Vigía → Este mes → «Comprar en Trading 212» → Preparar el iPhone → «Copiar el
+// script»; en Scriptable, «+», pega y llama al script exactamente «Vigia Compra». No lleva ninguna
+// clave: la pide la primera vez y la guarda en el llavero de este iPhone.
 //
-// Qué hace cada vez que lo lanza la automatización diaria de Atajos:
-//  1. Si este mes ya compró (o lo dejaste a 0 €), no hace nada.
-//  2. Lee la lista pública del mes (docs/compra/lista.json). Si aún no es la de este mes, no hace nada.
-//  3. Reparte tu importe del mes (el que pusiste en Vigía) entre secciones y empresas con la misma
-//     regla que Vigía — a partes iguales, sin pasar del tope por empresa contando lo que ya tienes —
-//     y lanza una orden de compra a mercado por empresa. SOLO COMPRA: nunca vende.
-//  4. Te avisa con una notificación; al tocarla copia la compra para apuntarla en Vigía.
+// Qué hace cuando pulsas «Comprar ahora» en Vigía:
+//  1. Recibe de Vigía tu importe, tu reparto, la cuenta (real o Practice) y lo que ya tienes.
+//  2. Lee la lista pública del mes (docs/compra/lista.json). Si aún no es la de este mes, no compra.
+//  3. Reparte el importe entre secciones y empresas con la misma regla que Vigía — a partes iguales,
+//     sin pasar del tope por empresa contando lo que ya tienes — y, tras UNA confirmación, lanza una
+//     orden de compra a mercado por empresa. SOLO COMPRA: nunca vende.
+//  4. Te enseña el resultado y copia la compra para apuntarla en Vigía («Pegar compra del iPhone»).
 //
-// Tu importe, tu reparto y lo que ya tienes llegan desde Vigía («Guardar en el iPhone») y se guardan
-// solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
+// Una compra por mes y cuenta (si quieres otra, te lo pregunta). Tu importe, tu reparto y lo que ya
+// tienes se guardan solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 4;
+const VERSION = 5;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -239,8 +239,18 @@ async function bajarLista(conf) {
   return bajarJSON(url);
 }
 
+/** Días desde los precios de la lista («2026-12-01 15:07 UTC (…)»); null si no se sabe. */
+function diasDePrecios(lista) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String((lista && lista.precios_de) || ""));
+  if (!m) return null;
+  const d = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  return Math.floor((Date.now() - d) / 86400000);
+}
 function resumenPlan(plan, lista, ent) {
-  const lineas = [`${euros(plan.importe)} · ${NOMBRE_ENTORNO[ent]} · lista de ${nombreMes(lista.mes)}${lista.prueba ? " (PRUEBA)" : ""}`];
+  const cuenta = ent === "live" ? "CUENTA REAL" : NOMBRE_ENTORNO[ent];
+  const lineas = [`${euros(plan.importe)} · ${cuenta} · lista de ${nombreMes(lista.mes)}${lista.prueba ? " (PRUEBA)" : ""}`];
+  const dias = diasDePrecios(lista);
+  if (dias != null && dias > 3) lineas.push(`Ojo: los precios de la lista son de hace ${dias} días. Si han subido mucho, puede que alguna orden no entre por saldo.`);
   Object.entries(plan.secciones).forEach(([k, s]) => {
     lineas.push("", `${SECCION[k] || k}: ${euros(s.eur)}`);
     if (!s.ordenes.length) lineas.push(s.pausada ? "  en pausa este mes: no se invierte" : "  sin empresas: no se invierte");
@@ -265,7 +275,8 @@ async function enviarOrden(ent, auth, orden) {
   try { j = JSON.parse(texto); } catch (e) { j = null; }
   if (st >= 200 && st < 300 && j && j.id != null) return { ok: true, id: j.id };
   if (st >= 200 && st < 300) return { ok: false, dudosa: true, motivo: "respuesta rara: mira en Trading 212 si se hizo" };
-  const motivo = (j && (j.detail || j.message || j.title || j.code)) || ("HTTP " + st);
+  const explicacion = j && (j.clarification || j.detail || j.message || j.title);
+  const motivo = (j && [j.code, explicacion].filter(Boolean).join(": ")) || ("HTTP " + st);
   return { ok: false, status: st, motivo: String(motivo).slice(0, 140) };
 }
 
@@ -287,12 +298,18 @@ async function comprar(manual) {
 async function comprarSinCandado(manual) {
   const conf = leerConfig();
   if (!conf) {
-    await avisarUnaVezAlDia("sinconfig", "Vigía: falta configurar", "Abre Vigía → Este mes → Inversión automática → «Guardar en el iPhone».");
-    if (manual) await dialogo("Falta configurar", "Abre Vigía → Este mes → Inversión automática → «Guardar en el iPhone».", ["OK"], false);
+    await avisarUnaVezAlDia("sinconfig", "Vigía: falta configurar", "Compra desde Vigía: Este mes → «Comprar en Trading 212» → «Comprar ahora».");
+    if (manual) await dialogo("Falta configurar", "Compra desde Vigía: Este mes → «Comprar en Trading 212» → «Comprar ahora».", ["OK"], false);
     return "sinconfig";
   }
   const ent = entornoDe(conf);
   const mes = mesDe(new Date());
+  if (!manual && conf.modo === "manual") {
+    // Ahora se compra a mano desde Vigía («Comprar ahora»): si queda alguna automatización
+    // antigua, no compra nada y marca el mes para que el atajo deje de abrir Scriptable.
+    marcarMes(mes);
+    return "manual";
+  }
   const est = leerJSON("estado.json", {});
   est.compras = est.compras || {};
   const id = ent + ":" + mes;
@@ -303,10 +320,26 @@ async function comprarSinCandado(manual) {
       guardarJSON("estado.json", est);
       await avisar(`Vigía: revisa la compra de ${nombreMes(mes)}`, "Se cortó mientras enviaba las órdenes. Mira en Trading 212 qué se compró: Vigía no volverá a comprar este mes.");
     }
-    if (manual) await dialogo("Este mes ya está hecho", `La compra de ${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) ya se hizo o se saltó. Para repetirla usa «Permitir otra compra este mes».`, ["OK"], false);
-    marcarMes(mes);
-    return "yahecho";
+    let otra = false;
+    if (manual) {
+      const cortada = previa.estado === "enviando";
+      const n = previa.resultados ? previa.resultados.filter((r) => r.ok).length : 0;
+      const txt = cortada
+        ? `La compra de ${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) se cortó a mitad el ${previa.fecha}. Antes de repetir, mira en Trading 212 qué se compró.`
+        : previa.estado === "saltado"
+          ? `${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) se saltó el ${previa.fecha} (importe a 0 € o nada que comprar).`
+          : `Ya compraste ${nombreMes(mes)} (${NOMBRE_ENTORNO[ent]}) el ${previa.fecha}${n ? `: ${n} empresas` : ""}.`;
+      otra = (await dialogo("Este mes ya está hecho", txt + "\n\n¿Comprar otra vez? Se reparte de nuevo el importe entre las empresas de la lista.", ["Comprar otra vez"])) === 0;
+    }
+    if (!otra) { marcarMes(mes); return "yahecho"; }
   }
+  // La compra anterior de este mes (si pediste otra) se guarda aparte solo cuando de verdad se apunta la nueva.
+  let repetir = !!previa, archivada = false;
+  const registrar = (valor) => {
+    if (repetir) { archivarCompra(est, id); repetir = false; archivada = true; }
+    est.compras[id] = valor;
+    guardarJSON("estado.json", est);
+  };
   const dia = new Date().getDate();
   let lista;
   try { lista = await bajarLista(conf); }
@@ -317,7 +350,7 @@ async function comprarSinCandado(manual) {
   }
   if (lista.mes !== mes) {
     if (dia >= 5) await avisarUnaVezAlDia("nolista:" + mes, `Vigía: aún no hay lista de ${nombreMes(mes)}`, "Vigía todavía no ha publicado la compra de este mes. Si sigue así, mira GitHub → Actions → «Compra del mes».");
-    if (manual) await dialogo("Aún no hay lista de este mes", `La última lista es de ${nombreMes(lista.mes)}. Se publica el primer día de bolsa del mes, a las 15:07 UTC.`, ["OK"], false);
+    if (manual) await dialogo("Aún no hay lista de este mes", `La última lista es de ${nombreMes(lista.mes)}. La de ${nombreMes(mes)} se publica el primer día de bolsa del mes, a las 15:07 UTC (te llega un aviso).`, ["OK"], false);
     return "nolista";
   }
   if (lista.prueba && ent === "live") {
@@ -325,13 +358,13 @@ async function comprarSinCandado(manual) {
     return "prueba";
   }
   if ((Number(lista.script_minimo) || 1) > VERSION) {
-    await avisarUnaVezAlDia("version", "Vigía: actualiza el script", "Vigía → Inversión automática → «Copiar el script» y pégalo en Scriptable sobre «Vigia Compra».");
+    await avisarUnaVezAlDia("version", "Vigía: actualiza el script", "Vigía → Este mes → «Comprar en Trading 212» → Preparar el iPhone → «Copiar el script» y pégalo en Scriptable sobre «Vigia Compra».");
+    if (manual) await dialogo("Actualiza el script", "Esta lista necesita un script más nuevo. Vigía → «Copiar el script» y pégalo en Scriptable sobre «Vigia Compra».", ["OK"], false);
     return "version";
   }
   const importe = importeDelMes(conf, mes);
   if (!(importe > 0)) {
-    est.compras[id] = { estado: "saltado", fecha: hoy() };
-    guardarJSON("estado.json", est);
+    registrar({ estado: "saltado", fecha: hoy() });
     await avisar(`Vigía: ${nombreMes(mes)} sin compra`, "Este mes lo tienes a 0 € en Vigía: no se compra nada.");
     marcarMes(mes);
     return "cero";
@@ -353,8 +386,7 @@ async function comprarSinCandado(manual) {
   }
   const plan = planCompra(lista, conf, mes);
   if (!plan.ordenes.length) {
-    est.compras[id] = { estado: "saltado", fecha: hoy() };
-    guardarJSON("estado.json", est);
+    registrar({ estado: "saltado", fecha: hoy() });
     await avisar(`Vigía: ${nombreMes(mes)} sin compra`, "No hay nada que comprar este mes (secciones en pausa o en el tope). El dinero se queda en la cuenta.");
     marcarMes(mes);
     return "nada";
@@ -364,8 +396,7 @@ async function comprarSinCandado(manual) {
     if (r !== 0) return "cancelado";
   }
   // La marca se guarda ANTES de enviar: si algo se corta a mitad, nunca se compra dos veces.
-  est.compras[id] = { estado: "enviando", fecha: hoy(), inicio: new Date().toISOString() };
-  guardarJSON("estado.json", est);
+  registrar({ estado: "enviando", fecha: hoy(), inicio: new Date().toISOString() });
   marcarMes(mes);
   const resultados = [];
   let corte = null;
@@ -381,21 +412,35 @@ async function comprarSinCandado(manual) {
   const malas = resultados.filter((r) => !r.ok && !r.dudosa);
   if (!buenas.length && !dudosas.length) {
     delete est.compras[id];               // no se compró nada: se reintenta en la próxima ejecución
+    if (archivada) desarchivarCompra(est, id);   // era «otra vez»: la compra anterior sigue siendo la del mes
     guardarJSON("estado.json", est);
-    marcarMes("");
+    marcarMes(est.compras[id] ? mes : "");
     const motivo = corte || (malas[0] && malas[0].motivo) || "error desconocido";
+    if (manual) {
+      await dialogo("No se pudo comprar", `${motivo}.\n\nNo se ha comprado nada: puedes volver a intentarlo desde Vigía.`, ["OK"], false);
+      return "fallo";
+    }
     await avisar("Vigía: no se pudo comprar", `${motivo}. Se volverá a intentar en la próxima ejecución.`);
     return "fallo";
   }
-  const compra = { id, mes, entorno: ent, fecha: hoy(),
+  const veces = (est.repeticiones || {})[id] || 1;
+  const compra = { id: veces > 1 ? `${id}#${veces}` : id, mes, entorno: ent, fecha: hoy(),
                    compras: buenas.map((r) => ({ t: r.empresa, q: r.cantidad, p: r.precio_usd, s: r.seccion })) };
-  est.compras[id] = { estado: "hecho", fecha: hoy(), compra,
+  est.compras[id] = { estado: "hecho", fecha: hoy(), inicio: est.compras[id].inicio, compra,
                       resultados: resultados.map((r) => ({ empresa: r.empresa, cantidad: r.cantidad, ok: !!r.ok, motivo: r.motivo || null })) };
   guardarJSON("estado.json", est);
   const gastado = buenas.reduce((s, r) => s + r.eur, 0);
   let cuerpo = `Compradas ${buenas.length} de ${resultados.length} · ≈ ${euros(gastado)} (${NOMBRE_ENTORNO[ent]}).`;
   if (malas.length) cuerpo += ` Fallaron: ${malas.map((r) => `${r.empresa} (${r.motivo})`).join("; ")}.`;
   if (dudosas.length) cuerpo += ` Revisa en Trading 212: ${dudosas.map((r) => r.empresa).join(", ")}.`;
+  if (manual) {
+    if (ent === "live") Pasteboard.copy(PREFIJO_COMPRA + b64url(compra));
+    await avisar(`Vigía: compra de ${nombreMes(mes)}`, cuerpo, URL_COPIAR);
+    const fin = ent === "live" ? "\n\nYa está copiada: vuelve a Vigía y pulsa «Pegar compra del iPhone» para apuntarla en tu cartera."
+                               : "\n\n(Cuenta Practice: es una prueba, no hace falta apuntarla en Vigía.)";
+    await dialogo(malas.length || dudosas.length ? "Compra enviada (con fallos)" : "Compra enviada ✓", cuerpo + fin, ["OK"], false);
+    return "hecho";
+  }
   cuerpo += ent === "live" ? " Toca para apuntarlas en Vigía." : " (Prueba: no hace falta apuntarla.)";
   await avisar(`Vigía: compra de ${nombreMes(mes)}`, cuerpo, URL_COPIAR);
   return "hecho";
@@ -548,7 +593,7 @@ async function guardarConfig(datos) {
 async function copiarUltima() {
   const est = leerJSON("estado.json", {});
   const hechas = Object.values(est.compras || {}).filter((x) => x && x.estado === "hecho" && x.compra && x.compra.entorno === "live");
-  hechas.sort((a, b) => String(a.compra.mes).localeCompare(String(b.compra.mes)));
+  hechas.sort((a, b) => String(a.compra.mes + (a.inicio || a.fecha)).localeCompare(String(b.compra.mes + (b.inicio || b.fecha))));
   const ult = hechas[hechas.length - 1];
   if (!ult) { await dialogo("Nada que copiar", "Todavía no hay ninguna compra con la cuenta real.", ["OK"], false); return "nada"; }
   Pasteboard.copy(PREFIJO_COMPRA + b64url(ult.compra));
@@ -556,9 +601,15 @@ async function copiarUltima() {
   return "copiada";
 }
 
-async function simular() {
-  const conf = leerConfig();
-  if (!conf) { await dialogo("Falta configurar", "Abre Vigía → Inversión automática → «Guardar en el iPhone».", ["OK"], false); return "sinconfig"; }
+async function simular(datos) {
+  let conf = leerConfig();
+  if (datos) {
+    let c; try { c = deB64url(datos); } catch (e) { c = null; }
+    const error = validarConfig(c);
+    if (error) { await dialogo("No se puede simular", `Los datos de Vigía no son válidos (${error}).`, ["OK"], false); return "invalida"; }
+    conf = { ...c, meses: {} };
+  }
+  if (!conf) { await dialogo("Falta configurar", "Abre Vigía → Este mes → «Comprar en Trading 212» → «Probar sin comprar».", ["OK"], false); return "sinconfig"; }
   let lista;
   try { lista = await bajarLista(conf); } catch (e) { await dialogo("Sin lista", "No he podido descargar la lista de la compra.", ["OK"], false); return "sinlista"; }
   const mes = mesDe(new Date());
@@ -569,7 +620,7 @@ async function simular() {
   let aviso = "SIMULACIÓN: no se envía ninguna orden.";
   if (lista.mes !== mes) aviso += ` La lista es de ${nombreMes(lista.mes)}, no de este mes: el día de la compra puede cambiar.`;
   if (lista.prueba && ent === "live") aviso += " La lista es de PRUEBA: con la cuenta real no se compraría.";
-  if (previa) aviso += " Este mes ya está hecho: no se volvería a comprar.";
+  if (previa) aviso += " Este mes ya hay una compra: al comprar te preguntará si quieres otra.";
   if (!Keychain.contains(claveLlavero(ent))) aviso += ` Falta la clave de la ${NOMBRE_ENTORNO[ent]}.`;
   await dialogo("Simulación", aviso + "\n\n" + resumenPlan(plan, lista, ent), ["OK"], false);
   return "simulada";
@@ -579,13 +630,32 @@ async function verEstado() {
   const conf = leerConfig();
   const est = leerJSON("estado.json", {});
   const filas = Object.entries(est.compras || {}).sort().slice(-6).map(([k, x]) => {
-    const [ent, mes] = k.split(":");
+    const [ent, resto] = k.split(":");
+    const mes = String(resto || "").split("#")[0];
     const n = x.resultados ? `${x.resultados.filter((r) => r.ok).length}/${x.resultados.length}` : "";
     return `${nombreMes(mes)} · ${ent === "demo" ? "prueba" : "real"} · ${x.estado} ${n}`;
   });
   const claves = ["live", "demo"].map((e) => `${NOMBRE_ENTORNO[e]}: ${Keychain.contains(claveLlavero(e)) ? "clave guardada" : "sin clave"}`);
   await dialogo(`Vigía · script v${VERSION}`, [conf ? describirConfig(conf) : "Sin configurar.", "", ...claves, "", ...(filas.length ? filas : ["Sin compras todavía."])].join("\n"), ["OK"], false);
   return "estado";
+}
+
+/** Guarda aparte la compra de este mes (live:2026-12 → live:2026-12#1) para poder hacer otra.
+ *  La siguiente lleva otro id (live:2026-12#2), así Vigía no la toma por la misma. */
+function archivarCompra(est, id) {
+  est.repeticiones = est.repeticiones || {};
+  const veces = est.repeticiones[id] || 1;
+  est.compras[`${id}#${veces}`] = est.compras[id];
+  delete est.compras[id];
+  est.repeticiones[id] = veces + 1;
+}
+
+function desarchivarCompra(est, id) {
+  const veces = (est.repeticiones || {})[id] || 1;
+  if (veces < 2) return;
+  est.compras[id] = est.compras[`${id}#${veces - 1}`];
+  delete est.compras[`${id}#${veces - 1}`];
+  if (veces - 1 <= 1) delete est.repeticiones[id]; else est.repeticiones[id] = veces - 1;
 }
 
 async function permitirOtra() {
@@ -596,15 +666,25 @@ async function permitirOtra() {
   if (!est.compras || !est.compras[id]) { await dialogo("Nada que borrar", "Este mes aún no hay compra registrada.", ["OK"], false); return "nada"; }
   const r = await dialogo("¿Permitir otra compra este mes?", `Se olvida la compra de este mes (${NOMBRE_ENTORNO[ent]}) y la próxima ejecución volverá a comprar. Úsalo solo si de verdad no se compró nada.`, ["Sí, olvidarla"]);
   if (r !== 0) return "cancelado";
-  delete est.compras[id];
+  archivarCompra(est, id);
   guardarJSON("estado.json", est);
   marcarMes("");
   return "borrada";
 }
 
+/** «Comprar ahora» en Vigía: trae el importe, el reparto, la cuenta y tus posiciones. Se guardan como la
+ *  configuración (modo manual: la automatización ya no compra) y se compra tras UNA confirmación. */
+async function comprarDesdeVigia(datos) {
+  let c; try { c = deB64url(datos); } catch (e) { c = null; }
+  const error = validarConfig(c);
+  if (error) { await dialogo("No se puede comprar", `Los datos de Vigía no son válidos (${error}).`, ["OK"], false); return "invalida"; }
+  guardarJSON("config.json", { ...c, meses: {}, modo: "manual", recibido: new Date().toISOString() });
+  return comprar(true);
+}
+
 async function menu() {
   const opciones = ["Comprar ahora", "Simular (sin comprar)", "Copiar la última compra para Vigía", "Poner o cambiar la clave", "Ver estado", "Permitir otra compra este mes"];
-  const r = await dialogo(`Vigía · compra automática (v${VERSION})`, "Normalmente no hace falta tocar nada: la automatización de Atajos lo lanza cada día.", opciones);
+  const r = await dialogo(`Vigía · compra (v${VERSION})`, "Lo normal es comprar desde Vigía: Este mes → «Comprar en Trading 212» → «Comprar ahora».", opciones);
   if (r === 0) return comprar(true);
   if (r === 1) return simular();
   if (r === 2) return copiarUltima();
@@ -619,10 +699,11 @@ async function main() {
   const accion = q.accion || (config.runsInApp ? "menu" : "auto");
   if (accion === "auto") return comprar(false);
   if (accion === "config") return guardarConfig(q.datos);
-  if (accion === "simular") return simular();
+  if (accion === "simular") return simular(q.datos);
   if (accion === "copiar") return copiarUltima();
   if (accion === "clave") return pedirClave(q.entorno === "demo" ? "demo" : q.entorno === "live" ? "live" : null);
   if (accion === "comprar") return comprar(true);
+  if (accion === "compra") return comprarDesdeVigia(q.datos);
   return menu();
 }
 

@@ -294,10 +294,10 @@
     </details>`;
   }
 
-  // ───────────── inversión automática (Trading 212 + script «Vigia Compra» de Scriptable) ─────────────
-  // Tú decides el total de cada mes y cómo se reparte entre secciones; Vigía lo manda al iPhone
-  // («Guardar en el iPhone») junto con lo que ya tienes, y el script reparte entre empresas con la
-  // misma regla que esta pantalla (M.planCompra) y compra. Nada de esto sale de tu móvil.
+  // ───────────── comprar en Trading 212 (botón «Comprar ahora» → script «Vigia Compra» de Scriptable) ─────────────
+  // Tú escribes cuánto inviertes y cómo se reparte entre secciones; «Comprar ahora» abre el script del
+  // iPhone con eso y con lo que ya tienes, que reparte entre empresas con la misma regla que esta
+  // pantalla (M.planCompra) y, tras UNA confirmación, compra. Nada de esto sale de tu móvil.
   const NOMBRE_SCRIPT = "Vigia Compra";
   const urlScriptable = (q) => "scriptable:///run?scriptName=" + encodeURIComponent(NOMBRE_SCRIPT) + "&" + q;
 
@@ -354,7 +354,8 @@
     else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, "");
     return /^-?(\d+\.?\d*|\.\d+)$/.test(t) ? parseFloat(t) : NaN;
   };
-  let listaPublica = null, listaEstado = "idle", pegarManual = false;
+  let listaPublica = null, listaEstado = "idle", listaFallo = false, pegarManual = false;
+  let esperandoCompra = 0, vigilaVuelta = false;
 
   function autoCfg() {
     const a = cfg.auto && typeof cfg.auto === "object" ? cfg.auto : {};
@@ -383,33 +384,23 @@
   }
   const mesActual = () => M.mesDe(new Date());
 
-  /** Configuración que se manda al iPhone. */
+  /** Lo que viaja al iPhone con cada compra: el importe de ESTA compra, el reparto, la cuenta y lo que ya tienes. */
   function configIphone() {
     const a = autoCfg(), secs = seccionesAuto(), pct = repartoPct(a, secs);
     const reparto = {};
     secs.forEach((k) => { if (pct[k] > 0) reparto[k] = Math.round(pct[k] * 100) / 10000; });
-    const meses = {};
-    const desde = mesActual();
-    Object.entries(a.meses).forEach(([m, v]) => { const x = Number(v); if (m >= desde && isFinite(x) && x >= 0) meses[m] = x; });
     const { valorPos } = valoresPos();
     const posiciones = {};
     Object.entries(valorPos).forEach(([k, v]) => { if (v > 0) posiciones[k] = Math.round(v * 100) / 100; });
-    return { v: 1, entorno: a.entorno, total: Number(a.total) || 0, meses, reparto, posiciones,
+    return { v: 1, entorno: a.entorno, total: Number(a.total) || 0, meses: {}, reparto, posiciones,
              fuera: (cfg.t212Fuera || []).slice().sort(),
              lista: new URL("compra/lista.json", location.href).href.split("#")[0], guardado: new Date().toISOString() };
-  }
-  /** Huella de lo que importa (sin precios ni fecha) para saber si hay cambios sin guardar en el iPhone. */
-  function huellaConfig(c) {
-    const t = JSON.stringify([c.entorno, c.total, c.meses, c.reparto, c.fuera, ops.length, ops.length ? ops[ops.length - 1].id : ""]);
-    let h = 5381;
-    for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
-    return h.toString(36);
   }
   function erroresAuto(a, secs) {
     const e = [];
     const total = Number(a.total);
-    if (a.total === "" || !isFinite(total)) e.push("Escribe cuánto quieres invertir cada mes.");
-    else if (total < 0 || total > M.MAX_IMPORTE_MES) e.push(`El importe tiene que estar entre 0 y ${num(M.MAX_IMPORTE_MES, 0)} €.`);
+    if (a.total === "" || !isFinite(total) || total === 0) e.push("Escribe cuánto vas a invertir.");
+    else if (total < 0 || total > M.MAX_IMPORTE_MES) e.push(`El importe tiene que estar entre 1 y ${num(M.MAX_IMPORTE_MES, 0)} €.`);
     const pct = repartoPct(a, secs);
     const suma = secs.reduce((s, k) => s + (pct[k] || 0), 0);
     if (!secs.length) e.push("No hay secciones activas en el informe.");
@@ -424,22 +415,26 @@
     try {
       const r = await fetch(new URL("compra/lista.json", location.href).href.split("#")[0] + "?t=" + Date.now(), { cache: "no-store" });
       listaPublica = r.ok ? await r.json() : null;
-    } catch (e) { listaPublica = null; }
+      listaFallo = !r.ok;
+    } catch (e) { listaPublica = null; listaFallo = true; }
     listaEstado = "ok";
     pintar();
   }
-
-  /** Mes de la próxima compra: el actual hasta el día 10 (la lista se publica el primer día de bolsa, como
-   *  muy tarde hacia el día 5), salvo que ya hayas apuntado su compra; después, el siguiente. */
-  function mesProximaCompra() {
-    const m = mesActual();
-    const yaApuntada = autoCfg().apuntadas.includes("live:" + m);
-    return { mes: new Date().getDate() <= 10 && !yaApuntada ? m : M.mesSiguiente(m) };
+  /** Al volver a Vigía (desde Scriptable o desde el aviso del móvil): recarga la lista si aún no era la de este
+   *  mes y, si venías de «Comprar ahora», recuerda apuntar la compra. */
+  function alVolverAVigia() {
+    if (document.visibilityState !== "visible") return;
+    if (!(listaPublica && listaPublica.mes === mesActual() && !listaPublica.prueba)) { listaEstado = "idle"; listaFallo = false; }
+    if (esperandoCompra && Date.now() - esperandoCompra < 30 * 60 * 1000) {
+      esperandoCompra = 0;
+      if (autoCfg().entorno === "live") aviso = "¿Ya has comprado? El iPhone ha dejado la compra copiada: pulsa «Pegar compra del iPhone» (abajo, en «Comprar en Trading 212») para apuntarla en tu cartera.";
+    }
+    pintar();
   }
 
   /** Lista para la vista previa: la publicada de este mes o, si no, una orientativa con las empresas del informe. */
   function listaParaVista(mes) {
-    if (listaPublica && listaPublica.mes === mes) return { lista: listaPublica, orientativa: false };
+    if (listaPublica && listaPublica.mes === mes && !listaPublica.prueba) return { lista: listaPublica, orientativa: false };
     const paqs = paquetesDe(informe), secciones = {};
     seccionesAuto().forEach((k) => {
       secciones[k] = { pausada: false, ordenes: (paqs[k].candidatas || []).filter((c) => c.precio > 0)
@@ -455,84 +450,72 @@
     const a = autoCfg(), secs = seccionesAuto(), pct = repartoPct(a, secs);
     const errores = erroresAuto(a, secs);
     const conf = errores.length ? null : configIphone();
-    const huella = conf ? huellaConfig(conf) : null;
-    const guardadoOk = a.guardado && conf && a.guardado.huella === huella;
-    const estado = !a.guardado ? `<span class="m-chip m-warn">Aún no guardado en el iPhone</span>`
-      : guardadoOk ? `<span class="m-chip m-bien">Guardado en el iPhone el ${esc(fecha(a.guardado.el))}</span>`
-      : `<span class="m-chip m-warn">Hay cambios sin guardar en el iPhone</span>`;
+    const mes = mesActual();
+    const listaMes = !!(listaPublica && listaPublica.mes === mes && !listaPublica.prueba);
+    const apuntada = a.apuntadas.some((x) => x === "live:" + mes || x.startsWith("live:" + mes + "#"));
+    const deCuando = listaMes && listaPublica.precios_de ? ` · precios del ${String(listaPublica.precios_de).slice(0, 16)} UTC` : "";
+    const chipLista = listaEstado !== "ok" ? `<span class="m-chip">Comprobando la lista del mes…</span>`
+      : listaMes ? `<span class="m-chip m-bien">Lista de ${esc(nombreMes(mes))} publicada${esc(deCuando)}</span>`
+      : listaFallo ? `<span class="m-chip m-warn">No he podido comprobar la lista del mes (¿sin conexión?)</span>`
+      : `<span class="m-chip m-warn">La lista de ${esc(nombreMes(mes))} aún no está: sale el primer día de bolsa del mes (te llega un aviso)</span>`;
+    const chipHecha = apuntada ? ` <span class="m-chip m-bien">Compra de ${esc(nombreMes(mes))} apuntada ✓</span>` : "";
     const suma = secs.reduce((s, k) => s + (pct[k] || 0), 0);
     const filasRep = secs.map((k) => `<label class="m-auto-rep"><span>${esc(nombrePaq(k))}</span>
         <input type="text" inputmode="decimal" data-auto-rep="${esc(k)}" value="${esc(num(pct[k], pct[k] % 1 ? 1 : 0))}" aria-label="% para ${esc(nombrePaq(k))}"><span>%</span></label>`).join("");
 
-    // próximos 6 meses: el habitual o el importe concreto de ese mes
-    const prox = mesProximaCompra();
-    const filasMes = [];
-    for (let i = 0; i < 6; i++) {
-      const m = M.mesSiguiente(prox.mes, i);
-      const concreto = Object.prototype.hasOwnProperty.call(a.meses, m);
-      const valor = concreto ? a.meses[m] : a.total;
-      filasMes.push(`<tr><td>${esc(nombreMes(m))}${i === 0 ? ` <span class="m-dim">(próxima)</span>` : ""}</td>
-        <td class="num"><input type="text" inputmode="decimal" class="m-auto-mes" data-auto-mes="${esc(m)}" value="${esc(valor === "" ? "" : num(Number(valor), Number(valor) % 1 ? 2 : 0))}" aria-label="Importe de ${esc(nombreMes(m))}"> €</td>
-        <td>${concreto ? `<button class="m-btn m-btn-mini" data-accion="automeshabitual" data-mes="${esc(m)}">Volver al habitual</button>` : `<span class="m-dim">habitual</span>`}</td></tr>`);
-    }
-
     // vista previa con la misma regla que el iPhone
     let vista = "";
     if (!errores.length) {
-      const { lista, orientativa } = listaParaVista(prox.mes);
-      const plan = M.planCompra(lista, conf, prox.mes);
+      const { lista, orientativa } = listaParaVista(mes);
+      const plan = M.planCompra(lista, conf, mes);
       const filas = Object.entries(plan.secciones).map(([k, sct]) => {
         const emp = sct.ordenes.map((o) => `${esc(o.empresa)} ${esc(eur(o.eur))}`).join(" · ");
         return `<li><strong>${esc(nombrePaq(k))}</strong>: ${esc(eur(sct.eur))}${sct.ordenes.length ? ` → ${emp}` : ` <span class="m-dim">(${sct.pausada ? "en pausa" : "sin empresas"}: se queda en la cuenta)</span>`}</li>`;
       }).join("");
-      vista = `<div class="m-auto-vista"><p><strong>Próxima compra: ${esc(nombreMes(prox.mes))} · ${esc(eur(plan.importe))}</strong>
-        ${plan.importe > 0 ? "" : ` <span class="m-dim">(a 0 €: ese mes no se compra)</span>`}</p>
-        ${plan.importe > 0 ? `<ul class="m-ac-lista">${filas}</ul>
-        <p class="m-dim">${orientativa ? "Orientativo, con las empresas de este informe: la lista real se publica el primer día de bolsa del mes, con los precios de ese momento." : `Lista publicada (${esc(listaPublica.precios_de || "")}).`}
-        Se gasta ≈ ${esc(eur(plan.gastoEur))}; se quedan ≈ ${esc(eur(plan.importe - plan.gastoEur))} en la cuenta (margen del 2 %, topes y redondeo).</p>` : ""}</div>`;
+      vista = `<div class="m-auto-vista"><p><strong>Esta compra: ${esc(nombreMes(mes))} · ${esc(eur(plan.importe))}</strong></p>
+        <ul class="m-ac-lista">${filas}</ul>
+        <p class="m-dim">${orientativa ? "Orientativo, con las empresas de este informe: la lista real se publica el primer día de bolsa del mes, con los precios de ese momento." : `Con la lista publicada (${esc(listaPublica.precios_de || "")}).`}
+        Se gasta ≈ ${esc(eur(plan.gastoEur))}; se quedan ≈ ${esc(eur(plan.importe - plan.gastoEur))} en la cuenta (margen del 2 %, topes y redondeo).</p></div>`;
     }
 
-    const urlGuardar = conf ? urlScriptable("accion=config&datos=" + M.aB64url(conf)) : "";
+    // «Comprar ahora»: con la cuenta real, solo con la lista de este mes publicada
+    let motivoNo = null;
+    if (errores.length) motivoNo = "";
+    else if (a.entorno === "live" && listaEstado !== "ok") motivoNo = "Comprobando la lista del mes…";
+    else if (a.entorno === "live" && !listaMes && !listaFallo) motivoNo = `Se podrá comprar cuando salga la lista de ${nombreMes(mes)} (el primer día de bolsa del mes; te llega un aviso).`;
+    const urlComprar = conf && motivoNo === null ? urlScriptable("accion=compra&datos=" + M.aB64url(conf)) : "";
+    const urlSimular = conf ? urlScriptable("accion=simular&datos=" + M.aB64url(conf)) : "";
     const pasos = `<ol class="m-pasos">
         <li><strong>Instala Scriptable</strong> (gratis, App Store).</li>
         <li>Pulsa <strong>«Copiar el script»</strong> (abajo). En Scriptable: «+» arriba a la derecha, pega, toca el título y llámalo exactamente <code>${esc(NOMBRE_SCRIPT)}</code> → <em>Done</em>. <span class="m-dim">Para actualizarlo: en Scriptable, los tres puntos (…) de «${esc(NOMBRE_SCRIPT)}» → mantén pulsado el texto → <em>Select All</em> → <em>Paste</em> → <em>Done</em>.</span></li>
-        <li><strong>Clave de prueba:</strong> en Trading 212 cambia a la cuenta <strong>Practice</strong> → Settings → API (Beta) → generar clave con el permiso <strong>«Orders: execute»</strong>. Copia la clave y el secreto.</li>
-        <li>Aquí arriba: cuenta <strong>Practice (prueba)</strong>, tu importe y el reparto → <strong>«Guardar en el iPhone»</strong>. Se abre Scriptable, te enseña el resumen → <em>Guardar</em> → te pide la clave en dos pasos: copia la <em>API key</em> en Trading 212, vuelve y pulsa <em>Pegar</em>; luego lo mismo con el <em>API secret</em>. La comprueba con Trading 212 sin comprar nada y la guarda en el llavero del iPhone (Vigía no la ve).</li>
-        <li><strong>Atajo «Compra Vigia»</strong> (Atajos → Shortcuts → «+»). Solo abre Scriptable cuando hay algo que comprar:
-          <ol>
-            <li><strong>Format Date</strong>: <em>Current Date</em>, formato <em>Custom</em> <code>yyyy-MM</code> → <strong>Set Variable</strong> <code>Mes</code>.</li>
-            <li><strong>Get File</strong>: carpeta <em>iCloud Drive → Scriptable</em>, ruta <code>vigia-mes-hecho.txt</code>, <em>Error If Not Found</em> <strong>apagado</strong> → <strong>Get Text from Input</strong> → <strong>If</strong> <em>Text</em> <strong>is</strong> <em>Mes</em> → <strong>Stop This Shortcut</strong> → <em>End If</em>.</li>
-            <li><strong>Get Contents of URL</strong>: <code>${esc(new URL("compra/lista.json", location.href).href.split("#")[0])}</code> → <strong>Get Dictionary Value</strong> <code>mes</code> → <strong>If</strong> <em>Dictionary Value</em> <strong>is not</strong> <em>Mes</em> → <strong>Stop This Shortcut</strong> → <em>End If</em>.</li>
-            <li><strong>Open URLs</strong>: <code>${esc(urlScriptable("accion=auto"))}</code></li>
-          </ol></li>
-        <li><strong>Automatizaciones</strong> (Atajos → <em>Automation</em> → «+»), las dos con <strong>Run Immediately</strong>, <em>Notify When Run</em> apagado y la acción <em>Compra Vigia</em>: <strong>Time of Day</strong> → 18:30 → <em>Daily</em>; y <strong>App</strong> → la app que más abras (p. ej. WhatsApp) → <em>Is Opened</em>. Así compra a las 18:30 o, si no pudo, la próxima vez que uses el móvil.</li>
-        <li><strong>Prueba:</strong> «Probar sin comprar» te enseña el reparto. Para una compra de prueba en Practice hace falta una lista de prueba (GitHub → Actions → «Compra del mes» → <em>forzar</em>; va aparte y la cuenta real ni la mira); luego Scriptable → <em>Vigia Compra</em> → «Comprar ahora».</li>
-        <li><strong>Con dinero real:</strong> crea la clave en tu cuenta real (mismo permiso), cambia aquí a <strong>Cuenta real</strong> → «Guardar en el iPhone» (te pedirá la clave real).</li>
-        <li><strong>Banco:</strong> una transferencia mensual a Trading 212 que llegue antes del día 1. Deja en la cuenta como saldo libre solo el dinero del mes.</li>
+        <li><strong>Clave:</strong> en Trading 212 → Settings → API (Beta) → crea una clave con <strong>solo</strong> el permiso <strong>«Orders: execute»</strong> (una en Practice para probar y otra en tu cuenta real). Scriptable te la pide la primera vez que compras: copia la <em>API key</em> → <em>Pegar</em>; luego el <em>API secret</em> → <em>Pegar</em>. La comprueba sin comprar nada y la guarda solo en el llavero del iPhone.</li>
+        <li><strong>Avisos:</strong> instala la app <strong>ntfy</strong> (gratis, sin cuenta) y suscríbete a tu tema privado (el nombre no está aquí porque esta página es pública). Te avisa cuando sale la lista del mes.</li>
+        <li>¿Tenías el atajo «Compra Vigia» y sus automatizaciones? <strong>Bórralos</strong>: ya no hacen falta (y aunque se queden, ya no compran).</li>
+        <li><strong>Banco:</strong> ten el dinero en Trading 212 antes de pulsar «Comprar ahora».</li>
       </ol>`;
     const pegar = pegarManual ? `<div class="m-auto-pegar"><label class="m-campo">Pega aquí lo que copió el iPhone<textarea id="m-auto-pegado" rows="3" placeholder="VIGIA-COMPRA1:…"></textarea></label>
         <button class="m-btn m-btn-ppal" data-accion="autopegartexto">Apuntar</button></div>` : "";
     return `<section class="m-card m-auto" id="m-auto">
-      <h2>Inversión automática <span class="m-dim">· Trading 212</span></h2>
-      <p class="m-dim">Tú decides cuánto inviertes cada mes; Vigía lo reparte entre secciones y empresas (igual que en «Este mes», sin pasar del tope por empresa) y tu iPhone lo compra solo el primer día de bolsa del mes. <strong>Solo compra: nunca vende.</strong></p>
-      <p>${estado}</p>
-      <label class="m-campo">Importe habitual cada mes (€)<input id="m-auto-total" type="text" inputmode="decimal" value="${esc(a.total === "" ? "" : num(Number(a.total), Number(a.total) % 1 ? 2 : 0))}" placeholder="500"></label>
+      <h2>Comprar en Trading 212</h2>
+      <p class="m-dim">Escribe cuánto vas a invertir y pulsa «Comprar ahora». Vigía lo reparte entre secciones y empresas (igual que en «Este mes», sin pasar del tope por empresa) y tu iPhone manda las órdenes a Trading 212 en ese momento. <strong>Solo compra: nunca vende.</strong></p>
+      <p>${chipLista}${chipHecha}</p>
+      <label class="m-campo">Importe de esta compra (€)<input id="m-auto-total" type="text" inputmode="decimal" value="${esc(a.total === "" ? "" : num(Number(a.total), Number(a.total) % 1 ? 2 : 0))}" placeholder="500"></label>
       <div class="m-campo">Reparto entre secciones${secs.length > 1 ? ` <button class="m-btn m-btn-mini" data-accion="autoiguales">A partes iguales</button>` : ""}
         <div class="m-auto-reps">${filasRep}</div>
         <span class="${Math.abs(suma - 100) > 0.5 ? "m-auto-mal" : "m-dim"}">Suma: ${esc(num(suma, suma % 1 ? 1 : 0))} %</span></div>
-      <div class="m-campo">Importe de cada mes <span class="m-dim">(cambia el de un mes concreto sin tocar el habitual; 0 = ese mes no se compra)</span>
-        <table class="m-tabla m-auto-meses"><tbody>${filasMes.join("")}</tbody></table></div>
       <label class="m-campo">Cuenta de Trading 212<select id="m-auto-entorno">
         <option value="live" ${a.entorno === "live" ? "selected" : ""}>Cuenta real</option>
         <option value="demo" ${a.entorno === "demo" ? "selected" : ""}>Practice (prueba, dinero ficticio)</option></select></label>
       ${errores.length ? `<div class="m-aviso">${errores.map(esc).join("<br>")}</div>` : vista}
       <div class="m-acciones">
-        ${conf ? `<a class="m-btn m-btn-ppal" id="m-auto-guardar" href="${esc(urlGuardar)}">Guardar en el iPhone</a>` : `<span class="m-btn m-btn-off">Guardar en el iPhone</span>`}
-        <a class="m-btn" href="${esc(urlScriptable("accion=simular"))}">Probar sin comprar</a>
+        ${urlComprar ? `<a class="m-btn m-btn-ppal" id="m-auto-comprar" href="${esc(urlComprar)}">Comprar ahora</a>` : `<span class="m-btn m-btn-off">Comprar ahora</span>`}
+        ${urlSimular ? `<a class="m-btn" href="${esc(urlSimular)}">Probar sin comprar</a>` : `<span class="m-btn m-btn-off">Probar sin comprar</span>`}
         <button class="m-btn" data-accion="autopegar">Pegar compra del iPhone</button>
       </div>
+      ${motivoNo ? `<p class="m-dim">${esc(motivoNo)}</p>` : ""}
+      ${urlComprar ? `<p class="m-dim">Se abre Scriptable con el resumen${a.entorno === "live" ? " (<strong>cuenta real</strong>)" : " (cuenta Practice, dinero ficticio)"}: no se compra nada hasta que pulses «Comprar» allí.</p>` : ""}
       ${pegar}
-      <p class="m-nota">Tras cada compra el iPhone te avisa; toca el aviso (copia la compra) y aquí pulsa «Pegar compra del iPhone» para apuntarla en tu cartera. Después, «Guardar en el iPhone» para que sepa lo que ya tienes.</p>
+      <p class="m-nota">Tras comprar, el iPhone deja la compra copiada: vuelve aquí y pulsa «Pegar compra del iPhone» para apuntarla en tu cartera.</p>
       <details class="m-det" data-k="auto-config" ${abiertos.has("auto-config") ? "open" : ""}><summary>Preparar el iPhone (una vez)</summary>${pasos}
         <div class="m-acciones"><button class="m-btn" data-accion="autocopiarscript">Copiar el script</button></div>
         ${scriptAMano && scriptTxt ? `<div class="m-auto-pegar"><p class="m-dim">Este navegador no me deja copiarlo solo. Toca «Seleccionar todo» y luego <em>Copy</em> (o mantén pulsado dentro → <em>Select All</em> → <em>Copy</em>).</p>
@@ -540,10 +523,10 @@
           <button class="m-btn" data-accion="autoseleccionarscript">Seleccionar todo</button></div>` : ""}</details>
       <details class="m-det" data-k="auto-info" ${abiertos.has("auto-info") ? "open" : ""}><summary>Cómo funciona</summary>
         <ul class="m-ac-lista">
-          <li><strong>Cuándo:</strong> el primer día de bolsa de EE. UU. de cada mes, a las 15:07 UTC (16:07 en España en invierno, 17:07 en verano), Vigía publica la lista del mes con los precios de ese momento. Tu iPhone la compra a las 18:30. Si estás de viaje y la bolsa está cerrada, Trading 212 deja la orden pendiente hasta que abre.</li>
-          <li><strong>Euros y dólares:</strong> tú pagas en euros y Trading 212 convierte solo (0,15 %). Su API solo acepta órdenes en número de acciones, así que el iPhone calcula cuántas son con el precio en dólares y el cambio del BCE. Se gasta el 98 % para que una subida o la comisión no dejen la última orden sin saldo.</li>
-          <li><strong>Reparto:</strong> tu importe del mes se divide entre secciones con tus porcentajes y, dentro de cada una, a partes iguales entre sus empresas sin pasar del tope del ${esc(pct2(informe))} por empresa, contando lo que ya tienes. Una sección en pausa no se invierte: ese dinero se queda en la cuenta.</li>
-          <li><strong>Seguridad:</strong> una sola compra por mes (aunque el iPhone lo intente cada día); si algo se corta a mitad, no repite; las listas de prueba nunca se compran con dinero real; tu importe, tu reparto, tu cartera y tu clave se quedan en tu iPhone.</li>
+          <li><strong>Cuándo:</strong> el primer día de bolsa de EE. UU. de cada mes, a las 15:07 UTC (16:07 en España en invierno, 17:07 en verano), Vigía publica la lista del mes con los precios de ese momento y te avisa en el móvil. Tú compras cuando quieras ese mes con «Comprar ahora». Si la bolsa está cerrada, Trading 212 deja la orden pendiente hasta que abre.</li>
+          <li><strong>Euros y dólares:</strong> tú pagas en euros y Trading 212 convierte solo (0,15 %). Su API solo acepta órdenes en número de acciones, así que el iPhone calcula cuántas son con el precio en dólares de la lista y el cambio del BCE. Se gasta el 98 % para que una subida o la comisión no dejen la última orden sin saldo; si la lista tiene más de 3 días, el iPhone te lo advierte antes de comprar.</li>
+          <li><strong>Reparto:</strong> tu importe se divide entre secciones con tus porcentajes y, dentro de cada una, a partes iguales entre sus empresas sin pasar del tope del ${esc(pct2(informe))} por empresa, contando lo que ya tienes. Una sección en pausa no se invierte: ese dinero se queda en la cuenta.</li>
+          <li><strong>Seguridad:</strong> esta página no puede comprar sola: siempre confirmas en el iPhone. Una compra por mes y cuenta (si pulsas otra vez, te pregunta); si algo se corta a mitad, no repite; las listas de prueba nunca se compran con dinero real; tu importe, tu reparto, tu cartera y tu clave se quedan en tu iPhone.</li>
         </ul></details>
     </section>`;
   }
@@ -559,29 +542,17 @@
       const a = autoCfg(), secs = seccionesAuto(), pctAct = repartoPct(a, secs), v = leerNum(e.target.value);
       a.reparto = { ...pctAct, [e.target.dataset.autoRep]: isNaN(v) ? 0 : Math.round(v * 10) / 10 }; guardarAuto(a); pintar();
     }));
-    $m.querySelectorAll("[data-auto-mes]").forEach((inp) => inp.addEventListener("change", (e) => {
-      const a = autoCfg(), m = e.target.dataset.autoMes, txt = e.target.value.trim(), v = leerNum(txt);
-      const meses = { ...a.meses };
-      if (txt === "" || isNaN(v) || v < 0) delete meses[m];
-      else if (Number(a.total) === v) delete meses[m];
-      else meses[m] = Math.round(v * 100) / 100;
-      a.meses = meses; guardarAuto(a); pintar();
-    }));
     const ent = document.getElementById("m-auto-entorno");
     if (ent) ent.addEventListener("change", (e) => { const a = autoCfg(); a.entorno = e.target.value === "demo" ? "demo" : "live"; guardarAuto(a); pintar(); });
     if ($m.querySelector('[data-accion="autocopiarscript"]')) precargarScript().catch(() => { /* se reintenta al tocar */ });
-    const g = document.getElementById("m-auto-guardar");
-    if (g) g.addEventListener("click", () => {
-      const a = autoCfg(), c = configIphone();
-      a.guardado = { huella: huellaConfig(c), el: M.hoyISO() }; guardarAuto(a);
-      setTimeout(pintar, 300);
-    });
+    const comprar = document.getElementById("m-auto-comprar");
+    if (comprar) comprar.addEventListener("click", () => { esperandoCompra = Date.now(); });
+    if (!vigilaVuelta) { vigilaVuelta = true; document.addEventListener("visibilitychange", alVolverAVigia); }
   }
 
   async function onAccionAuto(accion, b) {
     const a = autoCfg();
     if (accion === "autoiguales") { a.reparto = {}; guardarAuto(a); pintar(); return; }
-    if (accion === "automeshabitual") { const meses = { ...a.meses }; delete meses[b.dataset.mes]; a.meses = meses; guardarAuto(a); pintar(); return; }
     if (accion === "autopegar") {
       let texto = "";
       try { texto = await navigator.clipboard.readText(); } catch (e) { texto = ""; }
@@ -624,7 +595,7 @@
     ops = [...ops, ...nuevas]; guardar(CLAVE_OPS, ops);
     a.apuntadas = [...a.apuntadas, c.id].slice(-36); guardarAuto(a);
     pegarManual = false;
-    aviso = `Apuntadas ${nuevas.length} compras de ${nombreMes(c.mes)} (${nuevas.map((o) => o.ticker).join(", ")}). Ahora pulsa «Guardar en el iPhone» para que sepa lo que ya tienes.`;
+    aviso = `Apuntadas ${nuevas.length} compras de ${nombreMes(c.mes)} (${nuevas.map((o) => o.ticker).join(", ")}).`;
     pintar(); window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -634,14 +605,14 @@
     if (!lista.length) return "";
     const filas = lista.map((x) => `<li><strong>${esc(x.ticker)}</strong>${x.nombre ? ` · ${esc(x.nombre)}` : ""}${x.veredicto && x.veredicto !== "SIN_TESIS" ? ` <span class="pill v-${esc(x.veredicto)}">${esc(String(x.veredicto).replace("_", " "))}</span>` : ""}${(x.por_que || []).length ? `<br><span class="m-dim">${esc(x.por_que.join(" · "))}</span>` : ""}</li>`).join("");
     return `<div class="m-no-t212"><strong>Buenas, pero no están en Trading 212 (${lista.length})</strong>
-      <p class="m-dim">Cumplen todo y habrían entrado, pero en Trading 212 no se pueden comprar (no están o son de solo lectura): <strong>no se invierten</strong> (ni aquí, ni en la tarta, ni en la compra automática). Su plaza la ocupa la siguiente mejor.</p>
+      <p class="m-dim">Cumplen todo y habrían entrado, pero en Trading 212 no se pueden comprar (no están o son de solo lectura): <strong>no se invierten</strong> (ni aquí, ni en la tarta, ni en «Comprar en Trading 212»). Su plaza la ocupa la siguiente mejor.</p>
       <ul>${filas}</ul></div>`;
   }
   /** Aviso si este mes el informe no pudo comprobar qué hay en Trading 212. */
   function avisoT212() {
     const t = informe && informe.t212;
     if (!t || t.comprobado !== false) return "";
-    return `<div class="m-aviso">Este mes <strong>no se ha podido comprobar</strong> qué empresas están en Trading 212${t.aviso ? ` (${esc(t.aviso)})` : ""}. Alguna elegida podría no estar: la compra automática la saltaría con un aviso.</div>`;
+    return `<div class="m-aviso">Este mes <strong>no se ha podido comprobar</strong> qué empresas están en Trading 212${t.aviso ? ` (${esc(t.aviso)})` : ""}. Alguna elegida podría no estar: al comprar, Trading 212 rechazaría esa orden y el iPhone te diría cuál.</div>`;
   }
 
   function seccionPaquetes() {

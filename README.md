@@ -368,12 +368,13 @@ puede operar), guardada en GitHub → Settings → Secrets and variables → Act
 `backend/mensual/t212_instrumentos.json` y se usa si un mes la API falla (hasta 60 días). Sin ninguna lista,
 el informe lo avisa y solo se quitan las de la lista a mano.
 
-### Inversión automática cada mes (Trading 212 + iPhone)
+### Compra del mes en Trading 212 (botón en Vigía + iPhone)
 
-**Qué decides tú, en Vigía** («Este mes» → tarjeta «Inversión automática»): el importe habitual de cada
-mes, el importe de un mes concreto (0 = ese mes no se compra), el reparto entre secciones (%) y la cuenta
-(real o Practice). «Guardar en el iPhone» se lo pasa al script del iPhone junto con lo que ya tienes en
-cartera. Todo eso vive solo en tu móvil: nunca pasa por GitHub ni por Supabase.
+**Qué decides tú, en Vigía** («Este mes» → tarjeta «Comprar en Trading 212»): cuánto inviertes en esta compra,
+el reparto entre secciones (%) y la cuenta (real o Practice). Pulsas **«Comprar ahora»** y Vigía abre el script del
+iPhone con eso y con lo que ya tienes en cartera (`scriptable:///run?scriptName=Vigia%20Compra&accion=compra&datos=…`).
+Todo eso vive solo en tu móvil: nunca pasa por GitHub ni por Supabase. La página no puede comprar sola: siempre
+confirmas en el iPhone. Con la cuenta real el botón solo se activa cuando ya está la lista de este mes.
 
 **Qué publica Vigía** (workflow «Compra del mes», `.github/workflows/compra.yml`): una vez al mes, el primer
 día de bolsa de EE. UU., a las 15:07 UTC (bolsa abierta en verano y en invierno), `docs/compra/lista.json`
@@ -382,25 +383,29 @@ ese momento (Finnhub; si uno se aleja más de un 35 % del informe se usa el del 
 del BCE y el tope por empresa. Sin importes. Se quitan las de `backend/mensual/t212_no_disponibles.txt`. Si
 Finnhub no responde, decide por el horario. Nunca sustituye una lista real ya publicada; a mano, «forzar»
 crea una lista de PRUEBA en `docs/compra/lista-prueba.json`, aparte: solo la usa la cuenta Practice (la real ni
-la mira). `lista.json` existe siempre, aunque sea vacía, para que el atajo pueda leer su mes.
+la mira). `lista.json` existe siempre, aunque sea vacía.
 
-**Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable). Lo abre el atajo «Compra Vigia» (abre
-`scriptable:///run?scriptName=Vigia%20Compra&accion=auto`), lanzado por dos automatizaciones de Atajos: cada día a
-las 18:30 y cada vez que abres una app que usas mucho. El atajo solo abre Scriptable si hay algo que comprar: lee
-`vigia-mes-hecho.txt` (iCloud Drive → Scriptable; el script escribe ahí el mes ya resuelto) y el mes de
-`lista.json`): si este mes aún no compró y la lista es de este mes, reparte tu importe entre
-secciones (tus %) y empresas con la MISMA regla que «Este mes» (`planCompra`: a partes iguales, sin pasar del
-tope por empresa contando lo que ya tienes; una sección en pausa no se invierte) y lanza una orden de compra a
-mercado por empresa. **Solo compra: nunca vende.** Gasta el 98 % (margen para subidas y la comisión de cambio),
-acciones con 3 decimales, nada por debajo de 1 €. La clave de Trading 212 está en el llavero del iPhone. Se pide
-en dos pasos (API key y luego API secret), cada uno con un botón «Pegar» que lee lo copiado, y se comprueba al
-momento sin comprar nada: se manda a Trading 212 una orden vacía (sin empresa ni cantidad), que siempre rechaza;
-si la rechaza por la orden (400) la clave vale, si es por la clave (401/403) avisa.
-Salvaguardas: una sola compra por mes y cuenta (la marca se guarda antes de enviar; si algo se corta, no
-repite), candado contra ejecuciones simultáneas, corta si Trading 212 rechaza la clave (y reintenta otro día),
-reintenta una vez si pide esperar, no repite una orden sin respuesta, avisa si el día 5 aún no hay lista, pide
-confirmación para cualquier cambio o compra lanzada a mano. Al terminar avisa; tocando el aviso copia la compra
-y en Vigía «Pegar compra del iPhone» la apunta en la cartera (sin duplicar; las de prueba no se apuntan).
+**Aviso al móvil** (`backend/mensual/avisos.py`, app gratuita ntfy): cuando la lista ya se ve en la web, te llega
+«Vigía · compra de diciembre 2026»; al tocarlo se abre Vigía. También avisa si los días 3 o 7 aún no hay informe
+del mes, y si el informe mensual falla. El tema de ntfy es el secreto de GitHub `NTFY_TOPIC` (sin él no se manda
+nada). Para comprobarlo: Actions → «Probar avisos al móvil (ntfy)». Los avisos no llevan nada de tu cartera.
+
+**Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable): baja la lista del mes, reparte tu importe
+entre secciones (tus %) y empresas con la MISMA regla que «Este mes» (`planCompra`: a partes iguales, sin pasar del
+tope por empresa contando lo que ya tienes; una sección en pausa no se invierte), te enseña el resumen y, si pulsas
+«Comprar», lanza una orden de compra a mercado por empresa. **Solo compra: nunca vende.** Gasta el 98 % (margen
+para subidas y la comisión de cambio), acciones con 3 decimales, nada por debajo de 1 €; si la lista tiene más de
+3 días, lo advierte. Al terminar enseña el resultado (y el motivo de Trading 212 si alguna orden falla) y deja la
+compra copiada: en Vigía, «Pegar compra del iPhone» la apunta en la cartera (sin duplicar; las de prueba no se
+apuntan). La clave de Trading 212 (solo permiso «Orders: execute») está en el llavero del iPhone. Se pide en dos
+pasos (API key y luego API secret), cada uno con un botón «Pegar» que lee lo copiado, y se comprueba al momento
+sin comprar nada: se manda a Trading 212 una orden vacía (sin empresa ni cantidad), que siempre rechaza; si la
+rechaza por la orden (400) la clave vale, si es por la clave (401/403) avisa.
+Salvaguardas: una compra por mes y cuenta (si pulsas otra vez, pregunta; la segunda lleva otro id para que
+Vigía no la tome por la misma), la marca se guarda antes de enviar (si algo se corta, no repite), candado contra
+dos ejecuciones a la vez, corta si Trading 212 rechaza la clave, reintenta una vez si pide esperar, no repite una
+orden sin respuesta. Si aún te queda el antiguo atajo «Compra Vigia» con sus automatizaciones, ya no compra: el
+script está en modo manual (se pueden borrar).
 
 Por qué hay dólares: tú pagas en euros y Trading 212 convierte solo, pero su API solo admite órdenes en número
 de acciones, así que el iPhone calcula cuántas son con el precio en dólares y el cambio.
@@ -425,7 +430,10 @@ de acciones, así que el iPhone calcula cuántas son con el precio en dólares y
 | `backend/mensual/explicacion.py` | «¿Por qué ha caído?»: titulares + Gemini (solo lo usaba el paquete 1–3 años, hoy retirado). |
 | `db/006_mensual.sql` | Tabla del informe y vista pública de solo lectura (aplicar en el SQL Editor de Supabase). |
 | `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Este mes. |
-| `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano. |
+| `.github/workflows/mensual.yml` | Informe mensual (día 1) o a mano; si falla, aviso al móvil. |
+| `.github/workflows/compra.yml` · `backend/mensual/compra_t212.py` | Lista de la compra del mes para Trading 212 (primer día de bolsa) y aviso al móvil. |
+| `backend/mensual/avisos.py` · `.github/workflows/avisos.yml` | Avisos al móvil con ntfy (secreto `NTFY_TOPIC`) y su prueba a mano. |
+| `docs/vigia-compra.js` | Script del iPhone (Scriptable) que compra en Trading 212 al pulsar «Comprar ahora». |
 | `.github/workflows/prueba-paquetes.yml` | Prueba histórica de los paquetes con cuentas de cada fecha (a mano; informe en *Summary*). |
 | `backend/lynch.py` | Filtro Peter Lynch (puro, sin red): categoría, PEG, deuda, inventario, puntos; `con_precio` lo rehace con el precio de hoy. |
 | `backend/mensual/prueba_lynch.py` | Prueba histórica del filtro Lynch (grandes vs S&P 500, pequeñas vs Russell 2000, % de aciertos). |

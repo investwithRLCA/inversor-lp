@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -204,6 +205,17 @@ def precios_vivos(fh, tickers: list[str]) -> dict[str, float]:
     return out
 
 
+DIAS_AVISO_SIN_LISTA = (3, 7)   # si esos días aún no hay informe del mes, aviso al móvil (una vez cada día)
+
+
+def salida(clave: str, valor: str) -> None:
+    """Deja un dato para los pasos siguientes del workflow (el del aviso al móvil)."""
+    ruta = os.getenv("GITHUB_OUTPUT")
+    if ruta:
+        with open(ruta, "a", encoding="utf-8") as f:
+            f.write(f"{clave}={valor}\n")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--informe", help="informe en JSON (si no, el último de Supabase)")
@@ -216,10 +228,12 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     inf = json.loads(Path(a.informe).read_text(encoding="utf-8")) if a.informe else informe_de_supabase()
     mes = (inf or {}).get("mes")
+    ahora = datetime.now(timezone.utc)
     if not mes:
         print("No hay informe (o no trae «mes»): no se escribe la lista de la compra.")
+        if not a.forzar and ahora.day in DIAS_AVISO_SIN_LISTA:
+            salida("sin_lista", f"{ahora:%Y-%m}")
         return 1
-    ahora = datetime.now(timezone.utc)
     sal = Path(a.salida)
     archivo = sal / f"lista-{mes}.json"
     if not a.forzar:
@@ -228,6 +242,8 @@ def main(argv=None) -> int:
             return 0
         if mes != f"{ahora:%Y-%m}":
             print(f"El último informe es de {mes}, no de este mes: no se publica lista (no se compra nada).")
+            if ahora.day in DIAS_AVISO_SIN_LISTA:
+                salida("sin_lista", f"{ahora:%Y-%m}")
             return 0
     vivos, precios_de = {}, None
     if a.precios_vivos:
@@ -251,6 +267,7 @@ def main(argv=None) -> int:
     else:
         archivo.write_text(texto, encoding="utf-8")
         (sal / "lista.json").write_text(texto, encoding="utf-8")
+    salida("prueba" if a.forzar else "publicada", mes)
     print(f"Lista de la compra {mes}{' (PRUEBA: solo para la cuenta Practice)' if a.forzar else ''} · 1 € = {fx:.4f} $")
     for k, s in doc["secciones"].items():
         extra = " (en pausa)" if s["pausada"] else ""

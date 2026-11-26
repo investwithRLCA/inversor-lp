@@ -1,0 +1,23 @@
+name: Probar avisos al móvil (ntfy)
+
+# Manda un aviso de prueba a tu móvil para comprobar que la app ntfy y el secreto
+# NTFY_TOPIC están bien. Lanzarlo: Actions → «Probar avisos al móvil (ntfy)» → Run workflow.
+# Solo manda un texto de prueba: nada de tu cartera.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mandar el aviso de prueba
+        working-directory: backend
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python3 -m mensual.avisos prueba
