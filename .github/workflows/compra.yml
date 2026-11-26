@@ -1,21 +1,26 @@
 name: Compra del mes (lista para el atajo del iPhone)
 
 # Publica UNA vez al mes la lista de la compra en docs/compra/lista.json (empresas de
-# cada sección con su ticker de Trading 212 y su precio de ese momento, cambio euro/dólar
-# y tope por empresa) y te avisa en el móvil (app ntfy, secreto NTFY_TOPIC). Tú compras
+# cada sección con su ticker de Trading 212 y su precio, cambio euro/dólar y tope por
+# empresa), te avisa en el móvil (app ntfy, secreto NTFY_TOPIC) y, el resto del mes, le
+# pone los precios al día cada hora con la bolsa abierta. Tú compras
 # cuando quieras desde Vigía con «Comprar ahora»: el script «Vigia Compra» del iPhone (app
 # Scriptable) reparte tu importe —que solo está en tu iPhone— con la misma regla que Vigía
 # y compra en Trading 212. Solo compra: nunca vende.
 #
-# Avisos al móvil: cuando la lista ya se ve en la web; los días 3 y 7 si aún no hay
-# informe del mes; con «forzar», un aviso de PRUEBA.
+# Avisos al móvil: cuando la lista del mes ya se ve en la web; del día 3 al 10 si aún no
+# hay informe del mes; con «forzar», un aviso de PRUEBA. Los precios al día no avisan.
 #
-# Cuándo: el primer día de bolsa de EE. UU. de cada mes, a las 15:07 UTC (16:07 en
-# España en invierno, 17:07 en verano), con la bolsa abierta en verano y en invierno.
-# Se intenta los días 1 a 10: si ese día la bolsa está cerrada (fin de semana o
-# festivo) no hace nada, y en cuanto publica la lista del mes ya no la vuelve a tocar.
-# (No se filtra por día de la semana en el cron: con día del mes y día de la semana
-# a la vez, cron ejecuta si se cumple CUALQUIERA de los dos.)
+# Cuándo: cada hora a y 7, de lunes a viernes, de 13:07 a 21:07 UTC; solo hace
+# algo si la bolsa de EE. UU. está abierta en ese momento (lo mira con el SPY: cubre festivos y
+# el cambio de hora de verano).
+#  · Si aún no hay lista de este mes (y ya está el informe del mes), la publica — será en la
+#    primera hora con la bolsa abierta del primer día de bolsa del mes (≈15:07 UTC en invierno,
+#    ≈14:07 en verano) — y te avisa en el móvil.
+#  · Si ya está, le pone los precios de ese momento: MISMAS empresas, solo cambian los precios
+#    y el cambio euro/dólar. Así, compres el día que compres, el reparto sale con precios de esa
+#    hora. Sin aviso al móvil.
+#  · Del día 3 al 10, si aún no hay informe del mes, te avisa (una vez al día).
 #
 # A mano («Run workflow»): con «forzar» genera ya una lista de PRUEBA aunque la bolsa
 # esté cerrada. Va marcada "prueba": el iPhone solo la compra en la cuenta Practice,
@@ -25,7 +30,7 @@ name: Compra del mes (lista para el atajo del iPhone)
 
 on:
   schedule:
-    - cron: "7 15 1-10 * *"
+    - cron: "7 13-21 * * 1-5"
   workflow_dispatch:
     inputs:
       forzar:
@@ -44,13 +49,15 @@ concurrency:
 jobs:
   lista:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-mensual.txt
 
       - name: Instalar dependencias
         working-directory: backend
@@ -71,13 +78,16 @@ jobs:
 
       - name: Publicarla
         id: publicar
+        env:
+          REFRESCADA: ${{ steps.lista.outputs.refrescada }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           [ -d docs/compra ] || { echo "Sin lista."; exit 0; }
           git add docs/compra
           if git diff --cached --quiet; then echo "Sin cambios."; exit 0; fi
-          git commit -m "Compra del mes: lista para Trading 212"
+          if [ -n "$REFRESCADA" ]; then MSG="Compra del mes: precios al día ($(date -u +%H:%M) UTC)"; else MSG="Compra del mes: lista para Trading 212"; fi
+          git commit -m "$MSG"
           for i in 1 2 3; do
             if git pull --rebase origin main && git push origin HEAD:main; then exit 0; fi
             sleep 5

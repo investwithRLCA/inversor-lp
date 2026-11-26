@@ -376,18 +376,21 @@ iPhone con eso y con lo que ya tienes en cartera (`scriptable:///run?scriptName=
 Todo eso vive solo en tu móvil: nunca pasa por GitHub ni por Supabase. La página no puede comprar sola: siempre
 confirmas en el iPhone. Con la cuenta real el botón solo se activa cuando ya está la lista de este mes.
 
-**Qué publica Vigía** (workflow «Compra del mes», `.github/workflows/compra.yml`): una vez al mes, el primer
-día de bolsa de EE. UU., a las 15:07 UTC (bolsa abierta en verano y en invierno), `docs/compra/lista.json`
-(y el archivo `lista-AAAA-MM.json`): las empresas de cada sección con su ticker de Trading 212 y su precio de
-ese momento (Finnhub; si uno se aleja más de un 35 % del informe se usa el del informe), el cambio euro/dólar
-del BCE y el tope por empresa. Sin importes. Se quitan las de `backend/mensual/t212_no_disponibles.txt`. Si
-Finnhub no responde, decide por el horario. Nunca sustituye una lista real ya publicada; a mano, «forzar»
+**Qué publica Vigía** (workflow «Compra del mes», `.github/workflows/compra.yml`, cada hora a y 7 de 13:07 a
+21:07 UTC de lunes a viernes, solo si la bolsa de EE. UU. está abierta): el primer día de bolsa del mes, en la
+primera pasada con la bolsa abierta (≈15:07 UTC en invierno, ≈14:07 en verano), `docs/compra/lista.json` (y el
+archivo `lista-AAAA-MM.json`): las empresas de cada sección con su ticker de Trading 212 y su precio de ese momento
+(Finnhub; si uno se aleja más de un 35 % del informe se usa el del informe), el cambio euro/dólar del BCE y el
+tope por empresa. Sin importes. Se quitan las de `backend/mensual/t212_no_disponibles.txt`. Si Finnhub no
+responde, decide por el horario. **Después, cada hora con la bolsa abierta, le pone los precios al día**: las
+MISMAS empresas, solo cambian los precios (con la misma protección del 35 %) y el cambio, así que compres el día
+que compres el reparto sale con precios de esa hora; sin aviso al móvil y sin cambiar nunca las empresas del mes. A mano, «forzar»
 crea una lista de PRUEBA en `docs/compra/lista-prueba.json`, aparte: solo la usa la cuenta Practice (la real ni
 la mira). `lista.json` existe siempre, aunque sea vacía.
 
 **Aviso al móvil** (`backend/mensual/avisos.py`, app gratuita ntfy): cuando la lista ya se ve en la web, te llega
-«Vigía · compra de diciembre 2026»; al tocarlo se abre Vigía. También avisa si los días 3 o 7 aún no hay informe
-del mes, y si el informe mensual falla. El tema de ntfy es el secreto de GitHub `NTFY_TOPIC` (sin él no se manda
+«Vigía · compra de diciembre 2026»; al tocarlo se abre Vigía. También avisa si del día 3 al 10 aún no hay informe
+del mes (una vez al día), y si el informe mensual falla. El tema de ntfy es el secreto de GitHub `NTFY_TOPIC` (sin él no se manda
 nada). Para comprobarlo: Actions → «Probar avisos al móvil (ntfy)». Los avisos no llevan nada de tu cartera.
 
 **Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable): baja la lista del mes, reparte tu importe

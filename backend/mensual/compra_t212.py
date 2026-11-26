@@ -1,8 +1,10 @@
 """Lista de la compra del mes para Trading 212 (la lee el script «Vigia Compra» del iPhone).
 
-Se publica UNA vez al mes: el primer día de bolsa de EE. UU. del mes, a las 15:07 UTC
-(con la bolsa abierta tanto en horario de verano como de invierno), con los precios de
-ese momento:
+Se publica UNA vez al mes: el primer día de bolsa de EE. UU. del mes, en la primera pasada
+con la bolsa abierta (el workflow pasa cada hora a y 7 de 13:07 a 21:07 UTC, de lunes a
+viernes), con los precios de ese momento. Después, cada hora con la bolsa abierta, se le ponen
+los precios al día: MISMAS empresas, solo cambian los precios y el cambio euro/dólar, para que
+compres el día que compres el reparto salga con precios de esa hora:
 
     docs/compra/lista.json             la última real (la que lee el iPhone)
     docs/compra/lista-<AAAA-MM>.json   archivo de cada mes
@@ -205,7 +207,32 @@ def precios_vivos(fh, tickers: list[str]) -> dict[str, float]:
     return out
 
 
-DIAS_AVISO_SIN_LISTA = (3, 7)   # si esos días aún no hay informe del mes, aviso al móvil (una vez cada día)
+AVISO_SIN_LISTA = (3, 10)       # del día 3 al 10, si aún no hay informe del mes: aviso al móvil
+HORA_AVISO_SIN_LISTA = 13       # … solo en la primera pasada del día (13:07 UTC), para no repetirlo cada hora
+
+
+def toca_avisar_sin_lista(ahora: datetime) -> bool:
+    return AVISO_SIN_LISTA[0] <= ahora.day <= AVISO_SIN_LISTA[1] and ahora.hour == HORA_AVISO_SIN_LISTA
+
+
+def refrescar(lista: dict, vivos: dict[str, float], fx: float | None, precios_de: str,
+              ahora: datetime | None = None) -> tuple[dict, int]:
+    """La MISMA lista (mismas empresas, mismo mes) con los precios de ahora. Un precio que se aleje
+    más de un 35 % del anterior se ignora (sería un dato roto) y se deja el que había. Devuelve la
+    lista nueva y cuántas empresas traían precio en vivo."""
+    nueva = json.loads(json.dumps(lista))
+    con_precio = 0
+    for s in (nueva.get("secciones") or {}).values():
+        for o in s.get("ordenes") or []:
+            t = str(o.get("empresa") or "").upper()
+            if t in vivos:
+                con_precio += 1
+            o["precio_usd"] = round(precio_fiable(vivos.get(t), float(o["precio_usd"])), 4)
+    if fx:
+        nueva["eurusd"] = fx
+    nueva["precios_de"] = precios_de
+    nueva["actualizado"] = (ahora or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    return nueva, con_precio
 
 
 def salida(clave: str, valor: str) -> None:
@@ -214,6 +241,40 @@ def salida(clave: str, valor: str) -> None:
     if ruta:
         with open(ruta, "a", encoding="utf-8") as f:
             f.write(f"{clave}={valor}\n")
+
+
+def refrescar_publicada(archivo: Path, sal: Path, ahora: datetime, en_vivo: bool, fx_fijo: float | None = None,
+                        fh=None) -> int:
+    """Precios al día de la lista ya publicada de este mes. Solo con la bolsa abierta y si llega algún precio;
+    si no, no se toca nada (y no hay commit)."""
+    if not en_vivo:
+        print(f"La lista de {archivo.stem[6:]} ya está publicada (sin --precios-vivos no se actualizan precios).")
+        return 0
+    if fh is None:
+        from providers import FinnhubProvider
+        fh = FinnhubProvider()
+    if not mercado_abierto(fh, ahora):
+        print("La bolsa de EE. UU. está cerrada: los precios de la lista se quedan como están.")
+        return 0
+    lista = json.loads(archivo.read_text(encoding="utf-8"))
+    tickers = sorted({str(o.get("empresa") or "").upper() for s in (lista.get("secciones") or {}).values()
+                      for o in s.get("ordenes") or []} - {""})
+    vivos = precios_vivos(fh, tickers)
+    if not vivos:
+        print("Finnhub no ha dado ningún precio: la lista se queda como está.")
+        return 0
+    try:
+        fx = fx_fijo or eurusd()
+    except Exception as e:  # noqa: BLE001
+        print(f"Sin cambio euro/dólar nuevo ({e}): se deja el de la lista.")
+        fx = None
+    nueva, n = refrescar(lista, vivos, fx, f"{ahora:%Y-%m-%d %H:%M} UTC ({len(vivos)} de {len(tickers)} en vivo)", ahora)
+    texto = json.dumps(nueva, ensure_ascii=False, indent=1)
+    archivo.write_text(texto, encoding="utf-8")
+    (sal / "lista.json").write_text(texto, encoding="utf-8")
+    salida("refrescada", nueva.get("mes") or "")
+    print(f"Precios de la lista de {nueva.get('mes')} al día: {n} de {len(tickers)} en vivo · 1 € = {nueva['eurusd']:.4f} $")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -226,15 +287,19 @@ def main(argv=None) -> int:
     ap.add_argument("--forzar", action="store_true",
                     help="solo pruebas: genera ya una lista de PRUEBA (nunca se compra con dinero real)")
     a = ap.parse_args(argv)
+    ahora = datetime.now(timezone.utc)
+    sal = Path(a.salida)
+    # La lista de este mes ya está: se le ponen los precios de ahora (mismas empresas). Cada hora con la bolsa abierta.
+    ya = sal / f"lista-{ahora:%Y-%m}.json"
+    if not a.forzar and ya.exists():
+        return refrescar_publicada(ya, sal, ahora, a.precios_vivos, a.eurusd)
     inf = json.loads(Path(a.informe).read_text(encoding="utf-8")) if a.informe else informe_de_supabase()
     mes = (inf or {}).get("mes")
-    ahora = datetime.now(timezone.utc)
     if not mes:
         print("No hay informe (o no trae «mes»): no se escribe la lista de la compra.")
-        if not a.forzar and ahora.day in DIAS_AVISO_SIN_LISTA:
+        if not a.forzar and toca_avisar_sin_lista(ahora):
             salida("sin_lista", f"{ahora:%Y-%m}")
         return 1
-    sal = Path(a.salida)
     archivo = sal / f"lista-{mes}.json"
     if not a.forzar:
         if archivo.exists():
@@ -242,7 +307,7 @@ def main(argv=None) -> int:
             return 0
         if mes != f"{ahora:%Y-%m}":
             print(f"El último informe es de {mes}, no de este mes: no se publica lista (no se compra nada).")
-            if ahora.day in DIAS_AVISO_SIN_LISTA:
+            if toca_avisar_sin_lista(ahora):
                 salida("sin_lista", f"{ahora:%Y-%m}")
             return 0
     vivos, precios_de = {}, None

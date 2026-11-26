@@ -4,7 +4,7 @@ En la app ntfy te suscribes a un «tema» con un nombre difícil de adivinar (fu
 contraseña) y GitHub te manda ahí los avisos:
 
   · cuando sale la lista de la compra del mes (el primer día de bolsa, tras el informe);
-  · si el día 3 o el 7 todavía no hay informe del mes;
+  · del día 3 al 10, si todavía no hay informe del mes (una vez al día);
   · si el informe mensual falla.
 
 El nombre del tema es el secreto de GitHub NTFY_TOPIC: no está en el código porque este

@@ -425,7 +425,7 @@ async function comprarSinCandado(manual) {
   }
   if (lista.mes !== mes) {
     if (dia >= 5) await avisarUnaVezAlDia("nolista:" + mes, `Vigía: aún no hay lista de ${nombreMes(mes)}`, "Vigía todavía no ha publicado la compra de este mes. Si sigue así, mira GitHub → Actions → «Compra del mes».");
-    if (manual) await dialogo("Aún no hay lista de este mes", `La última lista es de ${nombreMes(lista.mes)}. La de ${nombreMes(mes)} se publica el primer día de bolsa del mes, a las 15:07 UTC (te llega un aviso).`, ["OK"], false);
+    if (manual) await dialogo("Aún no hay lista de este mes", `La última lista es de ${nombreMes(lista.mes)}. La de ${nombreMes(mes)} se publica el primer día de bolsa del mes, al abrir la bolsa de EE. UU. (te llega un aviso).`, ["OK"], false);
     return "nolista";
   }
   if (lista.prueba && ent === "live") {
