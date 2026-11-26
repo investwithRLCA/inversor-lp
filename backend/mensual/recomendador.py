@@ -167,6 +167,12 @@ def _momento(acciones: pd.DataFrame) -> np.ndarray:
     return m
 
 
+def _nombre_empresa(nombre) -> str:
+    """Nombre para reconocer la misma empresa con varios tickers (común, preferentes, OTC):
+    «Arch Capital Group Ltd.» y «ARCH CAPITAL GROUP LTD» → «archcapitalgroupltd»."""
+    return "".join(ch for ch in str(nombre or "").lower() if ch.isalnum())
+
+
 def _ficha_no_t212(reg: dict) -> dict:
     """Lo justo para enseñar una empresa buena que Trading 212 no tiene (no se invierte)."""
     razones = reg.get("razones") or []
@@ -285,6 +291,7 @@ def generar_informe(
         vetadas: list[dict] = []
         en_espera: list[dict] = []
         sin_t212 = no_t212.setdefault(paquete, [])
+        empresas_vistas: set[str] = set()       # la misma empresa con otro ticker (preferentes, OTC…) no repite
         cuenta_sector: dict[int, int] = {}
         tope_sector = reglas.n_max_sector if max_sector is None else max_sector
         for k in orden:
@@ -297,6 +304,9 @@ def generar_informe(
                 reg.update(evals[c])
             reg["tesis_antigua"] = bool(reg["tesis_dias"] is not None and reg["tesis_dias"] > TESIS_ANTIGUA_DIAS)
 
+            ne = _nombre_empresa(reg.get("nombre"))
+            if ne and ne in empresas_vistas:
+                continue                         # otra clase de acciones de una empresa ya elegida
             if len(aceptadas) >= n_max:
                 if len(en_espera) < MAX_EN_ESPERA:
                     en_espera.append({"ticker": reg["ticker"], "motivo": f"cumple, pero fuera de las {n_max} mejores"})
@@ -326,6 +336,20 @@ def generar_informe(
                 reg["t212"] = tk
             cuenta_sector[s_cod] = cuenta_sector.get(s_cod, 0) + 1
             aceptadas.append(reg)
+            if ne:
+                empresas_vistas.add(ne)
+        # «buenas, pero no en Trading 212»: fuera las que son otra línea de una empresa ya elegida
+        # (p. ej. RSMDF = ResMed en OTC cuando se elige RMD) y los repetidos
+        vistos: set[str] = set()
+        limpias = []
+        for x in sin_t212:
+            ne = _nombre_empresa(x.get("nombre"))
+            if ne and (ne in empresas_vistas or ne in vistos):
+                continue
+            if ne:
+                vistos.add(ne)
+            limpias.append(x)
+        sin_t212[:] = limpias
         for reg in aceptadas:
             reg["peso"] = round(1.0 / len(aceptadas), 4)
             reg["avisos"] = _avisos_candidata(reg)
