@@ -15,7 +15,7 @@
 // Una compra por mes y cuenta (si quieres otra, te lo pregunta). Tu importe, tu reparto y lo que ya
 // tienes se guardan solo en este iPhone. Lo único que sale de aquí son las órdenes a Trading 212.
 
-const VERSION = 9;
+const VERSION = 10;
 const NOMBRE = "Vigia Compra";
 const LISTA_POR_DEFECTO = "https://investwithrlca.github.io/inversor-lp/compra/lista.json";
 const API = { live: "https://live.trading212.com", demo: "https://demo.trading212.com" };
@@ -239,6 +239,45 @@ async function bajarLista(conf) {
   return bajarJSON(url);
 }
 
+/** Precios de ESTE momento para las empresas de la lista, y el cambio euro/dólar, de Yahoo Finance (sin clave).
+ *  Así el número de acciones sale con el precio de cuando compras, aunque GitHub no haya puesto la lista al
+ *  día. Si Yahoo no contesta, se quedan los de la lista; un precio que se aleje más de un 35 % del de la lista
+ *  se ignora (sería un dato roto) y el cambio solo se acepta si se mueve menos de un 5 %. No envía nada tuyo. */
+async function preciosAlComprar(lista) {
+  const copia = JSON.parse(JSON.stringify(lista));
+  const ordenes = Object.values(copia.secciones || {}).flatMap((s) => s.ordenes || []);
+  if (!ordenes.length) return copia;
+  const pedir = async (simbolo) => {
+    const r = new Request(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(simbolo)}?range=1d&interval=1d`);
+    r.timeoutInterval = 10;
+    r.headers = { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+                  "Accept": "application/json" };
+    try {
+      const j = await r.loadJSON();
+      const p = Number(j && j.chart && j.chart.result && j.chart.result[0] && j.chart.result[0].meta && j.chart.result[0].meta.regularMarketPrice);
+      return p > 0 ? p : null;
+    } catch (e) { return null; }
+  };
+  const simbolos = [...new Set(ordenes.map((o) => String(o.empresa || "").toUpperCase()).filter(Boolean))];
+  const vivos = {};
+  for (let i = 0; i < simbolos.length; i += 8) {         // de 8 en 8: rápido y sin saturar
+    const trozo = simbolos.slice(i, i + 8);
+    const ps = await Promise.all(trozo.map((t) => pedir(t.replace(/\./g, "-"))));   // BRK.B → BRK-B
+    trozo.forEach((t, k) => { if (ps[k]) vivos[t] = ps[k]; });
+  }
+  let n = 0;
+  ordenes.forEach((o) => {
+    const v = vivos[String(o.empresa || "").toUpperCase()], ref = Number(o.precio_usd);
+    if (v && ref > 0 && Math.abs(v / ref - 1) <= 0.35) { o.precio_usd = Math.round(v * 10000) / 10000; n++; }
+  });
+  const fx = await pedir("EURUSD=X");
+  if (fx && Number(copia.eurusd) > 0 && Math.abs(fx / copia.eurusd - 1) <= 0.05) copia.eurusd = Math.round(fx * 10000) / 10000;
+  if (n) copia.precios_de = `${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC (${n} de ${ordenes.length} en vivo, al comprar)`;
+  copia.enVivo = n;
+  copia.totalPrecios = ordenes.length;
+  return copia;
+}
+
 /** Días desde los precios de la lista («2026-12-01 15:07 UTC (…)»); null si no se sabe. */
 function diasDePrecios(lista) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String((lista && lista.precios_de) || ""));
@@ -269,6 +308,9 @@ function resumenPlan(plan, lista, ent) {
   const cuenta = ent === "live" ? "CUENTA REAL" : NOMBRE_ENTORNO[ent];
   const lineas = [`${euros(plan.importe)} · ${cuenta} · lista de ${nombreMes(lista.mes)}${lista.prueba ? " (PRUEBA)" : ""}`];
   if (plan.parcial) lineas.push(`Solo las que faltaban (${plan.ordenes.length}).`);
+  if (lista.enVivo != null) lineas.push(lista.enVivo
+    ? `Precios de ahora mismo: ${lista.enVivo} de ${lista.totalPrecios}${lista.enVivo < lista.totalPrecios ? " (el resto, los de la lista)" : ""}.`
+    : "No he podido traer los precios de ahora: uso los de la lista.");
   const dias = diasDePrecios(lista);
   if (dias != null && dias > 3) lineas.push(`Ojo: los precios de la lista son de hace ${dias} días. Si han subido mucho, puede que alguna orden no entre por saldo.`);
   Object.entries(plan.secciones).forEach(([k, s]) => {
@@ -490,6 +532,7 @@ async function comprarSinCandado(manual) {
     await avisarUnaVezAlDia("sinclave:" + ent, "Vigía: falta la clave de Trading 212", `Abre Scriptable → «Vigia Compra» → «Poner o cambiar la clave» (${NOMBRE_ENTORNO[ent]}).`);
     return "sinclave";
   }
+  lista = await preciosAlComprar(lista);         // precios de este momento (si no contestan, los de la lista)
   let plan = planCompra(lista, conf, mes);
   if (soloEstas) {
     plan = planSolo(plan, soloEstas);
@@ -791,6 +834,7 @@ async function simular(datos) {
   if (!conf) { await dialogo("Falta configurar", "Abre Vigía → Este mes → «Comprar en Trading 212» → «Probar sin comprar».", ["OK"], false); return "sinconfig"; }
   let lista;
   try { lista = await bajarLista(conf); } catch (e) { await dialogo("Sin lista", "No he podido descargar la lista de la compra.", ["OK"], false); return "sinlista"; }
+  lista = await preciosAlComprar(lista);
   const mes = mesDe(new Date());
   const ent = entornoDe(conf);
   const plan = planCompra(lista, conf, mes);

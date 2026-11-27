@@ -11,8 +11,9 @@ name: Compra del mes (lista para el atajo del iPhone)
 # Avisos al móvil: cuando la lista del mes ya se ve en la web; del día 3 al 10 si aún no
 # hay informe del mes; con «forzar», un aviso de PRUEBA. Los precios al día no avisan.
 #
-# Cuándo: cada media hora (a y 7 y a y 37), de lunes a viernes, de 13:07 a 21:37 UTC. GitHub
-# retrasa o se salta muchas ejecuciones programadas, por eso hay tantas: casi todas acaban en
+# Cuándo: lo lanza cada hora (a y 7, de 13:07 a 21:07 UTC, de lunes a viernes) el reloj de Supabase
+# (pg_cron, ver backend/sql/reloj_supabase.sql), que sí es puntual; las programadas de aquí abajo
+# quedan de reserva (GitHub retrasa o se salta muchas: el 27-nov no lanzó ni una). Casi todas acaban en
 # medio minuto (primer paso: si la lista del mes ya está y la bolsa de EE. UU. está cerrada —lo
 # mira con el SPY: cubre festivos y el cambio de hora—, no hace nada más).
 #  · Si aún no hay lista de este mes: normalmente ya la publica el «Recomendador mensual» al

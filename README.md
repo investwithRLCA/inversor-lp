@@ -395,6 +395,15 @@ del BCE y el tope por empresa. Sin importes. Se quitan las de `backend/mensual/t
 - A mano, «forzar» crea una lista de PRUEBA en `docs/compra/lista-prueba.json`, aparte: solo la usa la cuenta
   Practice (la real ni la mira). `lista.json` existe siempre, aunque sea vacía.
 
+**Reloj de Supabase** (`db/009_reloj_github.sql`): GitHub retrasa o se salta muchas ejecuciones programadas (el
+27-nov no lanzó ni una de las ~18 de «Compra del mes»), así que el programador de tareas de Postgres (pg_cron) de
+tu Supabase lanza los workflows con la API de GitHub a su hora: el informe el día 1 a las 00:17 UTC (con reservas
+a las 06:17, 12:17 y el día 2; van con «solo_si_falta», así que si el informe ya está no se repite) y «Compra del
+mes» cada hora a y 7 de 13:07 a 21:07 UTC de lunes a viernes. Usa un token de GitHub «fine-grained» solo de este
+repositorio y solo con el permiso «Actions: Read and write», guardado en el Vault de Supabase con el nombre
+`vigia_github_token` (nunca en el repositorio). La función que llama a GitHub está en un esquema privado que la
+API de Supabase no publica. Las programaciones de GitHub siguen de reserva.
+
 **Aviso al móvil** (`backend/mensual/avisos.py`, app gratuita ntfy): cuando la lista ya se ve en la web, te llega
 «Vigía · compra de diciembre 2026»; al tocarlo se abre Vigía. También avisa si del día 3 al 10 aún no hay informe
 del mes, si el informe mensual falla y cuando una vigilada entra en zona de compra. Cada aviso sale una sola vez
@@ -402,12 +411,14 @@ aunque GitHub repita el workflow (antes de mandarlo mira en ntfy si ya salió en
 ntfy es el secreto de GitHub `NTFY_TOPIC` (sin él no se manda nada). Para comprobarlo: Actions → «Probar avisos al
 móvil (ntfy)». Los avisos no llevan nada de tu cartera.
 
-**Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable): baja la lista del mes, reparte tu importe
+**Qué hace el iPhone** (`docs/vigia-compra.js`, en la app Scriptable): baja la lista del mes, pide a Yahoo Finance
+(sin clave) los precios y el cambio euro/dólar **de ese momento** —si no contestan, usa los de la lista; un precio que
+se aleje más de un 35 % del de la lista o un cambio que se mueva más de un 5 % se ignoran—, reparte tu importe
 entre secciones (tus %) y empresas con la MISMA regla que «Este mes» (`planCompra`: a partes iguales, sin pasar del
 tope por empresa contando lo que ya tienes; una sección en pausa no se invierte), te enseña el resumen y, si pulsas
 «Comprar», lanza una orden de compra a mercado por empresa. **Solo compra: nunca vende.** Gasta el 98 % (margen
-para subidas y la comisión de cambio), acciones con 3 decimales, nada por debajo de 1 €; si la lista tiene más de
-3 días, lo advierte. Al terminar enseña el resultado (y el motivo de Trading 212 si alguna orden falla) y deja la
+para subidas y la comisión de cambio), acciones con 3 decimales, nada por debajo de 1 €; si no hay precios de ese
+momento y la lista tiene más de 3 días, lo advierte. Al terminar enseña el resultado (y el motivo de Trading 212 si alguna orden falla) y deja la
 compra copiada: en Vigía, «Pegar compra del iPhone» la apunta en la cartera (sin duplicar; las de prueba no se
 apuntan). La clave de Trading 212 está en el llavero del iPhone: permiso «Orders: execute» y, recomendado, los de
 solo lectura «Orders: read» e «History: orders». Con ellos, si Trading 212 no contesta a una orden (cobertura, móvil
@@ -451,6 +462,7 @@ de acciones, así que el iPhone calcula cuántas son con el precio en dólares y
 | `docs/mensual.js`, `docs/mensual-ui.js` | Lógica pura y pantalla de la pestaña Este mes. |
 | `.github/workflows/mensual.yml` | Informe mensual (día 1, con horarios de reserva) o a mano; publica la lista de la compra y avisa; si falla, aviso al móvil. |
 | `.github/workflows/compra.yml` · `backend/mensual/compra_t212.py` | Lista de la compra del mes para Trading 212 (primer día de bolsa) y aviso al móvil. |
+| `db/009_reloj_github.sql` | Reloj de Supabase (pg_cron): lanza a su hora el informe del día 1 y «Compra del mes» con la API de GitHub. |
 | `backend/mensual/avisos.py` · `.github/workflows/avisos.yml` | Avisos al móvil con ntfy (secreto `NTFY_TOPIC`) y su prueba a mano. |
 | `docs/vigia-compra.js` | Script del iPhone (Scriptable) que compra en Trading 212 al pulsar «Comprar ahora». |
 | `.github/workflows/prueba-paquetes.yml` | Prueba histórica de los paquetes con cuentas de cada fecha (a mano; informe en *Summary*). |

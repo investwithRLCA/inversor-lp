@@ -18,9 +18,11 @@ name: Recomendador mensual
 # esta ejecución contienen SOLO información de empresas. Tu cartera y tus
 # importes no pasan nunca por aquí: se calculan en tu móvil.
 
-# CUÁNDO: el día 1, varias veces (y el 2 de reserva), porque GitHub retrasa muchas horas o se salta
-# a menudo las ejecuciones programadas (medido en este repositorio: 7-12 h de retraso). La primera
-# que entra hace el informe; las demás miran en Supabase que ya está el de este mes y no hacen nada.
+# CUÁNDO: lo lanza a su hora el reloj de Supabase (pg_cron, ver backend/sql/reloj_supabase.sql) el
+# día 1 a las 00:17 UTC, con reservas; además está programado aquí varias veces el día 1 y el 2,
+# porque GitHub retrasa muchas horas o se salta las programadas (medido: el 27-nov no lanzó ni una
+# de ~18 de «Compra del mes»). La primera que entra hace el informe; las demás —programadas o del
+# reloj, que pasan «solo_si_falta»— miran en Supabase que ya está el de este mes y no hacen nada.
 # Al terminar publica ya la lista de la compra del mes (con los precios del informe; luego «Compra
 # del mes» los pone al día cada hora con la bolsa abierta) y te avisa en el móvil.
 
@@ -51,6 +53,11 @@ on:
         type: boolean
         required: false
         default: true
+      solo_si_falta:
+        description: "Solo si aún no está el informe de este mes (lo usa el reloj de Supabase; a mano, déjalo sin marcar)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   issues: write
@@ -72,6 +79,7 @@ jobs:
         id: mirar
         env:
           EVENTO: ${{ github.event_name }}
+          SOLO_SI_FALTA: ${{ github.event.inputs.solo_si_falta || 'false' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
@@ -80,7 +88,7 @@ jobs:
           from datetime import datetime, timezone
           mes = f"{datetime.now(timezone.utc):%Y-%m}"
           hacer = True
-          if os.environ.get("EVENTO") == "schedule":           # a mano, siempre se hace
+          if os.environ.get("EVENTO") == "schedule" or os.environ.get("SOLO_SI_FALTA") == "true":   # a mano, siempre
               url = os.environ["SUPABASE_URL"].rstrip("/") + f"/rest/v1/mensual_informes?select=mes&mes=eq.{mes}&limit=1"
               k = os.environ["SUPABASE_SERVICE_KEY"]
               try:
